@@ -1,0 +1,11 @@
+{
+	"id": "arenasys-ai-chat-plugin",
+	"name": "AI Chat",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Chat with AI about your notes.",
+	"author": "arenasys",
+	"authorUrl": "https://github.com/arenasys",
+	"isDesktopOnly": true,
+	"platform": "node"
+}
