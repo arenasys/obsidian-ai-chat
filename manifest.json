@@ -6,6 +6,7 @@
 	"description": "Chat with AI about your notes.",
 	"author": "arenasys",
 	"authorUrl": "https://github.com/arenasys",
+	"fundingUrl": "https://ko-fi.com/arenasys",
 	"isDesktopOnly": true,
 	"platform": "node"
 }
