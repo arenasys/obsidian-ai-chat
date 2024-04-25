@@ -191,9 +191,6 @@ export class ChatView extends ItemView {
 		content.addEventListener("focusout", (event) => {
 			this.editSkip = event.relatedTarget == editButton;
 			this.editRevert = event.relatedTarget == trashButton;
-			if (!this.editSkip && !this.editRevert) {
-				return;
-			}
 			entry.edit = false;
 			this.syncEntryToDom(entry);
 		});
