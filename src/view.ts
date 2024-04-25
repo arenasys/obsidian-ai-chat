@@ -15,7 +15,7 @@ import {
 } from "./common";
 import { API, getAPI, getApproxTokens } from "./api";
 
-export const VIEW_TYPE_CHAT = "arena-chat-view";
+export const VIEW_TYPE_CHAT = "arenasys-ai-chat-view";
 
 function setIcon(el: Element, name: string) {
 	el.empty();

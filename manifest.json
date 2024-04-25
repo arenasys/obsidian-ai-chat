@@ -1,5 +1,5 @@
 {
-	"id": "arenasys-ai-chat-plugin",
+	"id": "arenasys-ai-chat",
 	"name": "AI Chat",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",

@@ -283,6 +283,9 @@ export class ChatSettingTab extends PluginSettingTab {
 				.setValue(currentSettings.maxTokens?.toFixed(0) ?? "")
 				.onChange(async (value) => {
 					currentSettings.maxTokens = Number.parseInt(value);
+					if (!Number.isFinite(currentSettings.maxTokens)) {
+						currentSettings.maxTokens = null;
+					}
 					await this.plugin.saveSettings();
 				});
 		});
@@ -293,6 +296,9 @@ export class ChatSettingTab extends PluginSettingTab {
 				.setValue(currentSettings.temperature?.toFixed(2) ?? "")
 				.onChange(async (value) => {
 					currentSettings.temperature = Number.parseFloat(value);
+					if (!Number.isFinite(currentSettings.temperature)) {
+						currentSettings.temperature = null;
+					}
 					await this.plugin.saveSettings();
 				});
 		});
@@ -303,6 +309,9 @@ export class ChatSettingTab extends PluginSettingTab {
 				.setValue(currentSettings.topK?.toFixed(2) ?? "")
 				.onChange(async (value) => {
 					currentSettings.topK = Number.parseFloat(value);
+					if (!Number.isFinite(currentSettings.topK)) {
+						currentSettings.topK = null;
+					}
 					await this.plugin.saveSettings();
 				});
 		});
@@ -313,6 +322,9 @@ export class ChatSettingTab extends PluginSettingTab {
 				.setValue(currentSettings.topP?.toFixed(2) ?? "")
 				.onChange(async (value) => {
 					currentSettings.topP = Number.parseFloat(value);
+					if (!Number.isFinite(currentSettings.topP)) {
+						currentSettings.topP = null;
+					}
 					await this.plugin.saveSettings();
 				});
 		});
@@ -329,6 +341,13 @@ export class ChatSettingTab extends PluginSettingTab {
 						.onChange(async (value) => {
 							currentSettings.frequencyPenalty =
 								Number.parseFloat(value);
+							if (
+								!Number.isFinite(
+									currentSettings.frequencyPenalty
+								)
+							) {
+								currentSettings.frequencyPenalty = null;
+							}
 							await this.plugin.saveSettings();
 						});
 				});

@@ -1,6 +1,6 @@
 import { App, TFile } from "obsidian";
 
-export const PLUGIN_ID: string = "arenasys-ai-chat-plugin";
+export const PLUGIN_ID: string = "arenasys-ai-chat";
 
 export interface ChatEntry {
 	user: boolean;
