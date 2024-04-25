@@ -101,7 +101,6 @@ async function getMessages(history: ChatHistory, target: ChatEntry) {
 		if (target == entry) {
 			break;
 		}
-		console.log(entry.content[entry.index]);
 		messages.push({
 			role: entry.user ? "user" : "assistant",
 			content: entry.content[entry.index],
