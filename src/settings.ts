@@ -107,7 +107,7 @@ export class ChatSettingTab extends PluginSettingTab {
 				});
 			});
 
-		var renameName = "";
+		let renameName = "";
 		new Setting(containerEl)
 			.setName("Edit profile")
 			.addButton((component) => {
@@ -146,7 +146,7 @@ export class ChatSettingTab extends PluginSettingTab {
 				});
 			});
 
-		var newName = "";
+		let newName = "";
 		new Setting(containerEl)
 			.setName("New profile")
 			.addText((component) => {
