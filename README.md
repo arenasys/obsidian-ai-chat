@@ -6,6 +6,6 @@ Chat to AI about your documents/notes.
 
 **Features**: Multiple documents, hide documents, markdown support, API profiles.
 
-**Disclaimer**: Shared note/document content and chat messages are sent to the API you specify, obviously.
+**Disclaimer**: API keys are not provided, bring your own. This plugin will connect to the API provider/endpoint you specify, your chat messages and the content of your choosen documents/notes will be shared with this provider/endpoint.
 
 ![screenshot](https://github.com/arenasys/obsidian-ai-chat/assets/79061310/a51cc354-18c0-4b27-9927-6f858456d64e)
