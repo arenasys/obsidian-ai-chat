@@ -174,7 +174,7 @@ export class ChatSettingTab extends PluginSettingTab {
 			.setClass("asys__setting-heading");
 
 		new Setting(containerEl)
-			.setName("API Provider")
+			.setName("API provider")
 			.addDropdown((component) => {
 				component.selectEl.addClass("asys__setting-medium");
 				component
@@ -195,7 +195,7 @@ export class ChatSettingTab extends PluginSettingTab {
 		let provider = currentSettings.apiProvider;
 		if (provider.endsWith("custom")) {
 			new Setting(containerEl)
-				.setName("API Endpoint")
+				.setName("API endpoint")
 				.setDesc(
 					provider == "openai-custom"
 						? "Any OpenAI compatible endpoint."
@@ -228,7 +228,7 @@ export class ChatSettingTab extends PluginSettingTab {
 		}
 
 		const modelSetting = new Setting(containerEl)
-			.setName("API Model")
+			.setName("API model")
 			.addDropdown((component) => {
 				if (current != "custom") {
 					component.selectEl.addClass("asys__setting-medium");
@@ -255,7 +255,7 @@ export class ChatSettingTab extends PluginSettingTab {
 			});
 		}
 
-		new Setting(containerEl).setName("API Key").addText((text) => {
+		new Setting(containerEl).setName("API key").addText((text) => {
 			text.inputEl.addClass("asys__setting-medium");
 			text.setPlaceholder("Enter your key")
 				.setValue(currentSettings.apiKey)
@@ -266,7 +266,7 @@ export class ChatSettingTab extends PluginSettingTab {
 		});
 
 		new Setting(containerEl)
-			.setName("System Prompt")
+			.setName("System prompt")
 			.addTextArea((text) => {
 				text.setValue(currentSettings.systemPrompt);
 				text.onChange(async (value) => {
@@ -277,7 +277,7 @@ export class ChatSettingTab extends PluginSettingTab {
 				text.setPlaceholder("Default");
 			});
 
-		new Setting(containerEl).setName("Max Tokens").addText((text) => {
+		new Setting(containerEl).setName("Max tokens").addText((text) => {
 			text.inputEl.addClass("asys__setting-medium");
 			text.setPlaceholder("Default")
 				.setValue(currentSettings.maxTokens?.toFixed(0) ?? "")
@@ -331,7 +331,7 @@ export class ChatSettingTab extends PluginSettingTab {
 
 		if (currentSettings.apiProvider != "anthropic") {
 			new Setting(containerEl)
-				.setName("Frequency Penalty")
+				.setName("Frequency penalty")
 				.addText((text) => {
 					text.inputEl.addClass("asys__setting-medium");
 					text.setPlaceholder("Default")
