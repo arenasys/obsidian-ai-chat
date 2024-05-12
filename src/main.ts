@@ -7,12 +7,12 @@ export default class ChatPlugin extends Plugin {
 	profiles: ChatSettingProfiles;
 
 	async onload() {
+		await this.loadSettings();
 		this.registerView(
 			VIEW_TYPE_CHAT,
 			(leaf) => new ChatView(leaf, this.profiles)
 		);
 		await this.activateView();
-		await this.loadSettings();
 		this.addSettingTab(new ChatSettingTab(this.app, this));
 	}
 
@@ -35,11 +35,13 @@ export default class ChatPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.profiles = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			await this.loadData()
-		);
+		let saved = {};
+		try {
+			saved = await this.loadData();
+		} catch (e) {
+			console.log("Failed to load settings", e);
+		}
+		this.profiles = Object.assign({}, DEFAULT_SETTINGS, saved);
 	}
 
 	async saveSettings() {
