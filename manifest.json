@@ -1,11 +1,11 @@
 {
 	"id": "arenasys-ai-chat",
 	"name": "AI Chat",
-	"version": "1.0.1",
+	"version": "1.0.2",
 	"minAppVersion": "0.15.0",
 	"description": "Chat with AI about your notes.",
 	"author": "arenasys",
 	"authorUrl": "https://github.com/arenasys",
-	"fundingUrl": "https://ko-fi.com/arenasys",
+	"fundingUrl": "https://github.com/sponsors/arenasys",
 	"isDesktopOnly": true
 }
