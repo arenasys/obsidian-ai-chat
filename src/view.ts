@@ -41,6 +41,9 @@ export class ChatView extends ItemView {
 	menuSkip: boolean;
 	menuOpen: boolean;
 
+	entryMenu: Menu;
+	entryMenuIndex: number;
+
 	constructor(leaf: WorkspaceLeaf, profiles: ChatSettingProfiles) {
 		super(leaf);
 		this.profiles = profiles;
@@ -186,6 +189,14 @@ export class ChatView extends ItemView {
 			} else {
 				this.editRevert = false;
 			}
+		});
+		trashButton.addEventListener("contextmenu", (event) => {
+			if (trashButton.ariaDisabled === "true") {
+				return;
+			}
+			this.entryMenuIndex = this.history.entries.indexOf(entry);
+			const rect = trashButton.getBoundingClientRect();
+			this.entryMenu.showAtPosition({ x: rect.right, y: rect.bottom });
 		});
 
 		content.addEventListener("focusout", (event) => {
@@ -632,6 +643,24 @@ export class ChatView extends ItemView {
 		});
 		settingsMenu.onHide(() => {
 			this.menuOpen = false;
+		});
+
+		this.entryMenu = new Menu();
+		this.entryMenu.addItem((item) => {
+			item.setIcon("trash");
+			item.setTitle("Delete below");
+			item.setWarning(true);
+			item.onClick((e) => {
+				let idx = this.entryMenuIndex + 1;
+				while (idx < this.history.entries.length) {
+					const before = this.history.entries.length;
+					this.removeEntry(this.history.entries[idx]);
+					if (before == this.history.entries.length) {
+						// failed to remove
+						break;
+					}
+				}
+			});
 		});
 
 		const current = this.app.workspace.getActiveFile();

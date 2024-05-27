@@ -13,6 +13,27 @@ export default class ChatPlugin extends Plugin {
 			(leaf) => new ChatView(leaf, this.profiles)
 		);
 		await this.activateView();
+
+		this.addCommand({
+			id: "ai-chat-show-chat",
+			name: "Show chat",
+			callback: async () => {
+				const { workspace } = this.app;
+				let leaves = workspace.getLeavesOfType(VIEW_TYPE_CHAT);
+				if (leaves.length == 0) {
+					const leaf = this.app.workspace.getRightLeaf(false);
+					await leaf?.setViewState({
+						type: VIEW_TYPE_CHAT,
+						active: false,
+					});
+					leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT);
+				}
+				if (leaves.length != 0) {
+					this.app.workspace.revealLeaf(leaves[0]);
+				}
+			},
+		});
+
 		this.addSettingTab(new ChatSettingTab(this.app, this));
 	}
 

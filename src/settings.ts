@@ -1,4 +1,4 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, ButtonComponent, PluginSettingTab, Setting } from "obsidian";
 import { ChatSettingProfiles, ChatSettings } from "./common";
 import ChatPlugin from "./main";
 
