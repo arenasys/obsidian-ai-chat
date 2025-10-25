@@ -22,6 +22,12 @@ function setIcon(el: Element, name: string) {
 	el.appendChild(getIcon(name) ?? getIcon("bug")!);
 }
 
+function setLoader(el: Element) {
+	var loader =
+		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="40" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.4"></animate></circle><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="100" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.2"></animate></circle><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="160" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="0"></animate></circle></svg>';
+	el.empty();
+	el.insertAdjacentHTML("afterbegin", loader);
+}
 export class ChatView extends ItemView {
 	profiles: ChatSettingProfiles;
 	entryContainer: Element;
@@ -83,6 +89,7 @@ export class ChatView extends ItemView {
 
 	async setMarkdown(el: HTMLElement, text: string) {
 		const tmp = document.createElement("div");
+
 		// prettier-ignore
 		await MarkdownRenderer.render(this.app, text, tmp, "", this);
 
@@ -115,16 +122,36 @@ export class ChatView extends ItemView {
 		entry.element = container.createEl("div", { cls: "asys__entry" });
 		entry.element.addClass(entry.user ? "asys__right" : "asys__left");
 
-		const controls = entry.element.createEl("div", {
+		// inner container to hold controls and content
+		const inner = entry.element.createEl("div", {
+			cls: "asys__entry_inner",
+		});
+
+		const controls = inner.createEl("div", {
 			cls: "asys__controls",
 		});
-		const content = entry.element.createEl("div", {
+		const content = inner.createEl("div", {
 			cls: "asys__content",
 		});
 
 		content.addEventListener("input", (event) => {
 			this.syncEntryFromDom(entry);
 		});
+
+		// Optional reasoning toggle button (for assistant entries), placed before edit
+		let reasoningButton: HTMLButtonElement | null = null;
+		if (!entry.user) {
+			reasoningButton = controls.createEl("button", {
+				cls: "asys__icon clickable-icon",
+			});
+			setIcon(reasoningButton, "brain");
+			reasoningButton.addEventListener("click", (event) => {
+				if (!entry.new && entry.thoughts && !entry.edit) {
+					entry.reasoning = !entry.reasoning;
+					this.syncEntryToDom(entry);
+				}
+			});
+		}
 
 		const editButton = controls.createEl("button", {
 			cls: "asys__icon clickable-icon",
@@ -137,6 +164,8 @@ export class ChatView extends ItemView {
 			}
 
 			entry.edit = true;
+			entry.reasoning = false;
+
 			this.editOriginal = entry.content[entry.index];
 			this.editRevert = false;
 			this.syncEntryToDom(entry);
@@ -260,11 +289,17 @@ export class ChatView extends ItemView {
 	}
 
 	async syncEntryToDom(entry: ChatEntry) {
-		const controls = entry.element!.children[0] as HTMLElement;
-		const editButton = controls.children[0];
+		const inner = entry.element!.children[0] as HTMLElement;
+		const controls = inner.children[0] as HTMLElement;
+		// When assistant entry, controls order: [reasoning?, edit, label, left, right, trash]
+		// When user entry, controls order: [edit, trash]
+		const editButton = controls.children[entry.user ? 0 : 1] as HTMLElement;
 		const trashButton = controls.lastElementChild!;
+		const reasoningButton = entry.user
+			? null
+			: (controls.children[0] as HTMLElement);
 
-		const content = entry.element!.children[1] as HTMLElement;
+		const content = inner.children[1] as HTMLElement;
 
 		const editing = content.getAttribute("contenteditable") == "true";
 		if (editing && !entry.edit) {
@@ -286,17 +321,44 @@ export class ChatView extends ItemView {
 
 		const invalid =
 			entry.content.length == 0 || entry.index >= entry.content.length;
-		const working = entry.new != null;
-		const waiting = entry.new != null && entry.new.length != 0;
 
-		if (invalid && !waiting) {
-			content.setText("...");
+		var working = entry.new != null;
+		var reasoning = entry.reasoning && !entry.edit;
+
+		if (invalid && !working) {
+			if (entry.started) {
+				setLoader(content);
+			} else {
+				content.setText("");
+			}
 		} else {
-			const text = waiting ? entry.new! : entry.content[entry.index];
+			const text =
+				(reasoning
+					? entry.thoughts!
+					: working
+					? entry.new!
+					: entry.content[entry.index]) ?? "";
+
 			if (entry.edit) {
 				await this.setText(content, text);
 			} else {
+				inner.setAttribute(
+					"data-asys-reasoning",
+					working && reasoning ? "true" : "false"
+				);
+
+				content.setAttribute(
+					"data-asys-reasoning",
+					reasoning ? "true" : "false"
+				);
+
 				await this.setMarkdown(content, text);
+
+				if (reasoning) {
+					(inner as HTMLElement).scrollTop = (
+						inner as HTMLElement
+					).scrollHeight;
+				}
 			}
 		}
 
@@ -307,26 +369,53 @@ export class ChatView extends ItemView {
 		trashButton.ariaDisabled = invalid || working ? "true" : "false";
 
 		if (!entry.user) {
-			const label = controls.children[1];
+			const label = controls.children[2];
 			label.setText(
 				entry.content.length == 0
 					? ""
 					: `${entry.index + 1} of ${entry.content.length}`
 			);
 
-			const leftButton = controls.children[2];
+			const leftButton = controls.children[3];
 			leftButton.ariaDisabled =
 				entry.index == 0 || invalid || entry.edit ? "true" : "false";
 			leftButton.ariaLabel = "Previous";
 
-			const rightButton = controls.children[3];
+			const rightButton = controls.children[4];
 			rightButton.ariaDisabled = invalid || entry.edit ? "true" : "false";
 			rightButton.ariaLabel = "Next";
+
+			// Show/hide the reasoning button based on conditions
+			if (reasoningButton) {
+				const atLastIndex =
+					entry.content.length > 0 &&
+					entry.index == entry.content.length - 1;
+				const reasoning = entry.reasoning;
+				const showReasoningButton = atLastIndex && !!entry.thoughts;
+				reasoningButton.classList.toggle(
+					"asys__hidden",
+					!showReasoningButton
+				);
+				reasoningButton.classList.toggle(
+					"asys__green-active",
+					!!reasoning
+				);
+				reasoningButton.classList.toggle(
+					"asys__gray-active",
+					!reasoning
+				);
+				reasoningButton.ariaLabel = reasoning
+					? "Reasoning"
+					: "Hide Reasoning";
+				reasoningButton.ariaDisabled =
+					invalid || entry.edit ? "true" : "false";
+			}
 		}
 	}
 
 	syncEntryFromDom(entry: ChatEntry) {
-		const content = entry.element!.children[1] as HTMLDivElement;
+		const inner = entry.element!.children[0] as HTMLElement;
+		const content = inner.children[1] as HTMLDivElement;
 		entry.content[entry.index] = content.innerText;
 	}
 
@@ -489,6 +578,10 @@ export class ChatView extends ItemView {
 
 	async redoResponse(entry: ChatEntry) {
 		entry.index = entry.content.length;
+		entry.thoughts = null;
+		entry.reasoning = false;
+		entry.started = false;
+		entry.new = null;
 		this.syncEntryToDom(entry);
 		this.makeRequest(entry);
 	}
@@ -497,7 +590,10 @@ export class ChatView extends ItemView {
 		const response = this.addEntry({
 			user: false,
 			edit: false,
+			reasoning: false,
 			new: null,
+			thoughts: null,
+			started: false,
 			index: 0,
 			content: [],
 		});
@@ -519,7 +615,10 @@ export class ChatView extends ItemView {
 				this.addEntry({
 					user: true,
 					edit: false,
+					reasoning: false,
 					new: null,
+					thoughts: null,
+					started: false,
 					index: 0,
 					content: [input],
 				});
@@ -544,32 +643,61 @@ export class ChatView extends ItemView {
 			if (entry.new == null) {
 				entry.new = "";
 			}
+			entry.reasoning = false;
 			entry.new += text;
 			this.syncEntryToDom(entry);
 			if (isLast) {
 				this.snapToBottom();
 			}
 		});
+		this.api.events.on("reasoning", (text: string) => {
+			if (text.length == 0) {
+				return;
+			}
+			if (entry.reasoning == false) {
+				entry.thoughts = "";
+				entry.reasoning = true;
+			}
+			if (entry.new == null) {
+				entry.new = "";
+			}
+			if (entry.thoughts == null) {
+				entry.thoughts = "";
+			}
+			entry.thoughts += text;
+			this.syncEntryToDom(entry);
+			if (isLast) {
+				this.snapToBottom();
+			}
+		});
 		this.api.events.on("status", (status: number) => {
+			console.log(Date.now(), "Status:", status);
 			if (status != 200) {
 				if (isLast) {
 					this.snapToBottom();
 				}
+			} else {
+				entry.started = true;
+				this.syncEntryToDom(entry);
 			}
 		});
 		this.api.events.on("done", () => {
+			console.log(Date.now(), "Done");
 			this.finishEntry(entry);
 		});
 		this.api.events.on("error", (error: string) => {
-			entry.new = null;
+			console.log(Date.now(), "Error:", error);
+			/*entry.new = null;
 			this.cleanEntry(entry);
-			this.syncEntryToDom(entry);
+			this.syncEntryToDom(entry);*/
 			this.showPopup(error);
 		});
 		this.api.events.on("abort", () => {
+			console.log(Date.now(), "Aborted");
 			this.finishEntry(entry);
 		});
 		this.api.events.on("close", () => {
+			console.log(Date.now(), "Closed");
 			this.cleanEntry(entry);
 			this.setWorking(false);
 		});

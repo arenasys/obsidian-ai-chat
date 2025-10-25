@@ -8,6 +8,9 @@ export interface ChatEntry {
 	content: string[];
 	edit: boolean;
 	new: string | null;
+	thoughts: string | null;
+	reasoning: boolean;
+	started: boolean;
 
 	element?: Element;
 }
@@ -37,12 +40,12 @@ export interface ChatSettings {
 	apiEndpoint: string;
 
 	systemPrompt: string;
+	reasoning: "low" | "medium" | "high" | null;
 	maxTokens: number | null;
 	temperature: number | null;
 	topK: number | null;
 	topP: number | null;
 	frequencyPenalty: number | null;
-
 	[index: string]: number | string | null;
 }
 

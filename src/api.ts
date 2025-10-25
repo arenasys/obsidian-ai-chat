@@ -3,6 +3,7 @@ import { createParser, EventSourceParser } from "eventsource-parser";
 import { EventEmitter } from "node:events";
 import { ClientRequest, IncomingMessage } from "node:http";
 import { request } from "node:https";
+import { request as request_http } from "node:http";
 
 function sanitize(text: string) {
 	// escape 2+ byte unicode characters
@@ -26,6 +27,9 @@ const TOGETHER_ENDPOINT: string = "https://api.together.xyz";
 
 const COHERE_ENDPOINT: string = "https://api.cohere.ai";
 const COHERE_PATH: string = "/v1/chat";
+
+const DEEPSEEK_ENDPOINT: string = "https://api.deepseek.com";
+const DEEPSEEK_PATH: string = "/chat/completions";
 
 const ANTHROPIC_MODELS: Record<string, string> = {
 	"claude-3-opus": "claude-3-opus-20240229",
@@ -53,6 +57,7 @@ const OPENAI_SETTINGS: Record<string, string> = {
 	topP: "top_p",
 	maxTokens: "max_tokens",
 	frequencyPenalty: "frequency_penalty",
+	reasoning: "reasoning",
 };
 
 const COHERE_MODELS: Record<string, string> = {
@@ -64,6 +69,18 @@ const COHERE_SETTINGS: Record<string, string> = {
 	temperature: "temperature",
 	topK: "k",
 	topP: "p",
+	maxTokens: "max_tokens",
+	frequencyPenalty: "frequency_penalty",
+};
+
+const DEEPSEEK_MODELS: Record<string, string> = {
+	"deepseek-r1": "deepseek-reasoner",
+	"deepseek-v3": "deepseek-chat",
+};
+
+const DEEPSEEK_SETTINGS: Record<string, string> = {
+	temperature: "temperature",
+	topP: "top_p",
 	maxTokens: "max_tokens",
 	frequencyPenalty: "frequency_penalty",
 };
@@ -160,25 +177,63 @@ function getContent(
 			content[value] = settings[key];
 		}
 	}
+
+	if ("reasoning" in content) {
+		var reasoning = settings["reasoning"];
+		content["reasoning"] = {
+			effort: reasoning,
+		};
+	}
+
 	return content;
 }
 
 export function getAPI(settings: ChatSettings) {
 	switch (settings.apiProvider) {
 		case "openai":
-			return new OpenAIAPI(OPENAI_ENDPOINT) as API;
+			return new OpenAIAPI(
+				OPENAI_ENDPOINT,
+				OPENAI_SETTINGS,
+				OPENAI_MODELS
+			) as API;
 		case "openrouter":
-			return new OpenAIAPI(OPENROUTER_ENDPOINT) as API;
+			return new OpenAIAPI(
+				OPENROUTER_ENDPOINT,
+				OPENAI_SETTINGS,
+				{}
+			) as API;
 		case "togetherai":
-			return new OpenAIAPI(TOGETHER_ENDPOINT) as API;
+			return new OpenAIAPI(TOGETHER_ENDPOINT, OPENAI_SETTINGS, {}) as API;
 		case "openai-custom":
-			return new OpenAIAPI(settings.apiEndpoint) as API;
+			return new OpenAIAPI(
+				settings.apiEndpoint,
+				OPENAI_SETTINGS,
+				{}
+			) as API;
 		case "anthropic":
-			return new AnthropicAPI(ANTHROPIC_ENDPOINT) as API;
+			return new AnthropicAPI(
+				ANTHROPIC_ENDPOINT,
+				ANTHROPIC_SETTINGS,
+				ANTHROPIC_MODELS
+			) as API;
 		case "anthropic-custom":
-			return new AnthropicAPI(settings.apiEndpoint) as API;
+			return new AnthropicAPI(
+				settings.apiEndpoint,
+				ANTHROPIC_SETTINGS,
+				{}
+			) as API;
 		case "cohere":
-			return new CohereAPI(COHERE_ENDPOINT) as API;
+			return new CohereAPI(
+				COHERE_ENDPOINT,
+				COHERE_SETTINGS,
+				COHERE_MODELS
+			) as API;
+		case "deepseek":
+			return new DeepSeekAPI(
+				DEEPSEEK_ENDPOINT,
+				DEEPSEEK_SETTINGS,
+				DEEPSEEK_MODELS
+			) as API;
 	}
 	return null;
 }
@@ -187,9 +242,18 @@ export class API {
 	events: EventEmitter;
 	request: ClientRequest;
 	endpoint: string;
-	constructor(endpoint: string) {
+	settings: Record<string, string>;
+	models: Record<string, string>;
+	closed: boolean = false;
+	constructor(
+		endpoint: string,
+		settings: Record<string, string>,
+		models: Record<string, string>
+	) {
 		this.endpoint = endpoint;
 		this.events = new EventEmitter();
+		this.settings = settings;
+		this.models = models;
 	}
 	async getEndpoint() {
 		return this.endpoint;
@@ -220,8 +284,9 @@ export class API {
 		const body = await this.getBody(history, target, settings);
 		let headers = await this.getHeaders(settings);
 
-		headers["charset"] = "UTF-8";
-		headers["content-type"] = "application/json; charset=UTF-8";
+		//headers["charset"] = "UTF-8";
+		//headers["content-type"] = "application/json; charset=UTF-8";
+		headers["content-type"] = "application/json";
 		headers["content-length"] = body.length;
 
 		const parser = createParser((event) => {
@@ -237,6 +302,10 @@ export class API {
 					let chunk = response.choices[0].delta.content;
 					if (chunk != undefined) {
 						this.events.emit("text", chunk);
+					}
+					let reasoning = response.choices[0].delta.reasoning;
+					if (reasoning != undefined) {
+						this.events.emit("reasoning", reasoning);
 					}
 					break;
 				case "content_block_start": // Anthropic
@@ -257,7 +326,12 @@ export class API {
 			}
 		});
 
-		this.request = request(
+		var request_fn = request;
+		if (url.startsWith("http://")) {
+			request_fn = request_http;
+		}
+
+		this.request = request_fn(
 			url,
 			{
 				method: "POST",
@@ -270,6 +344,7 @@ export class API {
 					response.socket.setTimeout(0);
 					response.setEncoding("utf8");
 					response.on("data", async (chunk: string) => {
+						console.log("DATA", chunk);
 						await this.handleChunk(chunk, parser);
 					});
 					response.on("end", () => {
@@ -295,32 +370,38 @@ export class API {
 			}
 		);
 		this.request.on("error", (e: Error) => {
+			if (this.closed) return;
 			this.events.emit(
 				"error",
 				`Request Failed\n${e.name}: ${formatSentance(
 					e.message
 				)}\n${ERROR_SUFFIX}`
 			);
+			this.request.destroy();
+			this.closed = true;
 		});
 		this.request.on("timeout", (e: Error) => {
+			if (this.closed) return;
 			this.events.emit(
 				"error",
 				`Request Failed\nTimeout\n${ERROR_SUFFIX}`
 			);
-			this.events.emit("close");
+			this.request.destroy();
+			this.closed = true;
 		});
 		this.request.on("close", () => {
+			this.closed = true;
 			this.events.emit("close");
 		});
 
-		this.request.setTimeout(10 * 1000);
+		this.request.setTimeout(20 * 1000);
 
 		this.request.write(Buffer.from(body, "utf8"));
 		this.request.end();
 	}
 
 	async abort() {
-		if (this.request) {
+		if (this.request && !this.closed) {
 			this.events.emit("abort");
 			this.request.destroy();
 		}
@@ -339,14 +420,14 @@ export class AnthropicAPI extends API {
 		const messages = await getMessages(history, target);
 		const content = getContent(
 			{
-				model: getModel(settings, ANTHROPIC_MODELS),
+				model: getModel(settings, this.models),
 				messages: messages,
 				stream: true,
 				system: settings.systemPrompt,
 				max_tokens: settings.maxTokens ?? 1024,
 			},
 			settings,
-			ANTHROPIC_SETTINGS
+			this.settings
 		);
 		const body = sanitize(JSON.stringify(content));
 
@@ -382,12 +463,12 @@ export class OpenAIAPI extends API {
 		}
 		const content = getContent(
 			{
-				model: getModel(settings, OPENAI_MODELS),
+				model: getModel(settings, this.models),
 				messages: messages,
 				stream: true,
 			},
 			settings,
-			OPENAI_SETTINGS
+			this.settings
 		);
 		const body = sanitize(JSON.stringify(content));
 
@@ -427,7 +508,7 @@ export class CohereAPI extends API {
 		});
 
 		let request: Record<string, any> = {
-			model: getModel(settings, COHERE_MODELS),
+			model: getModel(settings, this.models),
 			message: lastMessage!.content,
 			chat_history: messages,
 			stream: true,
@@ -437,7 +518,7 @@ export class CohereAPI extends API {
 			request.preamble = settings.systemPrompt;
 		}
 
-		const content = getContent(request, settings, COHERE_SETTINGS);
+		const content = getContent(request, settings, this.settings);
 		const body = sanitize(JSON.stringify(content));
 
 		return body;
@@ -466,5 +547,38 @@ export class CohereAPI extends API {
 		for (let chunk of chunks) {
 			parser.feed(`event: cohere\ndata:${chunk}\n\n`);
 		}
+	}
+}
+
+export class DeepSeekAPI extends API {
+	async getEndpoint() {
+		return joinEndpoint(this.endpoint, DEEPSEEK_PATH);
+	}
+	async getBody(
+		history: ChatHistory,
+		target: ChatEntry,
+		settings: ChatSettings
+	) {
+		const messages = await getMessages(history, target);
+		const content = getContent(
+			{
+				model: getModel(settings, this.models),
+				messages: messages,
+				stream: true,
+			},
+			settings,
+			this.settings
+		);
+		const body = sanitize(JSON.stringify(content));
+
+		return body;
+	}
+
+	async getHeaders(settings: ChatSettings): Promise<Record<string, any>> {
+		const headers = {
+			accept: "application/json",
+			authorization: `Bearer ${settings.apiKey}`,
+		};
+		return headers;
 	}
 }

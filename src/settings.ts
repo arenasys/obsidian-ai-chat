@@ -19,6 +19,7 @@ export const DEFAULT_SETTINGS: ChatSettingProfiles = {
 			topK: null,
 			topP: null,
 			frequencyPenalty: null,
+			reasoning: null,
 		},
 	],
 };
@@ -28,6 +29,7 @@ const PROVIDERS: Record<string, string> = {
 	cohere: "Cohere",
 	openrouter: "OpenRouter",
 	togetherai: "TogetherAI",
+	deepseek: "DeepSeek",
 	"openai-custom": "OpenAI compatible",
 	"anthropic-custom": "Anthropic compatible",
 };
@@ -48,6 +50,10 @@ const PROVIDER_MODELS: Record<string, Record<string, string>> = {
 	},
 	openrouter: {},
 	togetherai: {},
+	deepseek: {
+		"deepseek-r1": "DeepSeek R1",
+		"deepseek-v3": "DeepSeek V3",
+	},
 	"openai-custom": {},
 	"anthropic-custom": {},
 };
@@ -328,6 +334,35 @@ export class ChatSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				});
 		});
+
+		new Setting(containerEl)
+			.setName("Reasoning")
+			.addDropdown((component) => {
+				component.selectEl.addClass("asys__setting-medium");
+				component
+					.addOptions({
+						none: "Default",
+						low: "Low",
+						medium: "Medium",
+						high: "High",
+					})
+					.setValue(
+						currentSettings.reasoning
+							? currentSettings.reasoning
+							: "none"
+					)
+					.onChange(async (value) => {
+						if (value == "none") {
+							currentSettings.reasoning = null;
+						} else {
+							currentSettings.reasoning = value as
+								| "low"
+								| "medium"
+								| "high";
+						}
+						await this.plugin.saveSettings();
+					});
+			});
 
 		if (currentSettings.apiProvider != "anthropic") {
 			new Setting(containerEl)

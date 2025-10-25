@@ -2,7 +2,7 @@
 
 Chat to AI about your documents/notes.
 
-**Supported APIs**: OpenAI, Anthropic, Cohere, OpenRouter, TogetherAI.
+**Supported APIs**: OpenRouter (Recommended), OpenAI, Anthropic, Cohere, TogetherAI.
 
 **Features**: Multiple documents, hide documents, markdown support, API profiles.
 

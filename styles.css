@@ -6,6 +6,11 @@
 	user-select: text;
 }
 
+.asys__entry_inner {
+	overflow-y: auto;
+	overflow-x: hidden;
+}
+
 .asys__background {
 	background-color: var(--background-primary);
 	display: flex;
@@ -189,6 +194,15 @@
 
 .asys__green:hover {
 	color: var(--color-green) !important;
+}
+
+.asys__green-active {
+	color: var(--color-green) !important;
+}
+
+.asys__gray-active {
+	color: var(--text-muted) !important;
+	opacity: 0.4;
 }
 
 .asys__label {
@@ -390,4 +404,22 @@
 .asys__setting-name {
 	width: 13.4em !important;
 	min-width: unset;
+}
+
+.asys__content[data-asys-reasoning="true"] {
+	color: var(--text-muted);
+	font-style: italic;
+}
+
+.asys__entry_inner[data-asys-reasoning="true"] {
+	max-height: 100px;
+}
+
+.asys__content svg {
+	color: var(--text-muted);
+	height: 22px;
+	position: absolute;
+	top: 50%;
+	left: 12px;
+	transform: translateY(-50%);
 }
