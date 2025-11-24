@@ -146,7 +146,8 @@ export class ChatView extends ItemView {
 			});
 			setIcon(reasoningButton, "brain");
 			reasoningButton.addEventListener("click", (event) => {
-				if (!entry.new && entry.thoughts && !entry.edit) {
+				const currentSwipe = entry.swipes[entry.index];
+				if (!entry.new && currentSwipe?.thoughts && !entry.edit) {
 					entry.reasoning = !entry.reasoning;
 					this.syncEntryToDom(entry);
 				}
@@ -166,7 +167,7 @@ export class ChatView extends ItemView {
 			entry.edit = true;
 			entry.reasoning = false;
 
-			this.editOriginal = entry.content[entry.index];
+			this.editOriginal = entry.swipes[entry.index]?.content ?? "";
 			this.editRevert = false;
 			this.syncEntryToDom(entry);
 			content.focus();
@@ -190,7 +191,7 @@ export class ChatView extends ItemView {
 			});
 			setIcon(rightButton, "chevron-right");
 			rightButton.addEventListener("click", (event) => {
-				if (entry.index + 1 < entry.content.length) {
+				if (entry.index + 1 < entry.swipes.length) {
 					entry.index += 1;
 					this.syncEntryToDom(entry);
 				} else {
@@ -271,18 +272,18 @@ export class ChatView extends ItemView {
 
 	cleanEntry(entry: ChatEntry) {
 		entry.new = null;
-		if (entry.content.length == 0) {
+		if (entry.swipes.length == 0) {
 			this.removeEntry(entry);
 		} else {
-			entry.index = entry.content.length - 1;
+			entry.index = entry.swipes.length - 1;
 			this.syncEntryToDom(entry);
 		}
 	}
 
 	finishEntry(entry: ChatEntry) {
 		if (entry.new != null) {
-			entry.content.push(entry.new);
-			entry.index = entry.content.length - 1;
+			entry.swipes.push(entry.new);
+			entry.index = entry.swipes.length - 1;
 			entry.new = null;
 			this.syncEntryToDom(entry);
 		}
@@ -304,7 +305,10 @@ export class ChatView extends ItemView {
 		const editing = content.getAttribute("contenteditable") == "true";
 		if (editing && !entry.edit) {
 			if (this.editRevert) {
-				entry.content[entry.index] = this.editOriginal;
+				const current = entry.swipes[entry.index];
+				if (current) {
+					current.content = this.editOriginal;
+				}
 			}
 			entry.element?.removeClass("asys__edit");
 			setIcon(editButton, "more-horizontal");
@@ -320,10 +324,12 @@ export class ChatView extends ItemView {
 		content.setAttribute("contenteditable", entry.edit ? "true" : "false");
 
 		const invalid =
-			entry.content.length == 0 || entry.index >= entry.content.length;
+			entry.swipes.length == 0 || entry.index >= entry.swipes.length;
 
 		var working = entry.new != null;
 		var reasoning = entry.reasoning && !entry.edit;
+
+		const currentSwipe = working ? entry.new : entry.swipes[entry.index];
 
 		if (invalid && !working) {
 			if (entry.started) {
@@ -332,12 +338,9 @@ export class ChatView extends ItemView {
 				content.setText("");
 			}
 		} else {
-			const text =
-				(reasoning
-					? entry.thoughts!
-					: working
-					? entry.new!
-					: entry.content[entry.index]) ?? "";
+			const text = (
+				reasoning ? currentSwipe?.thoughts : currentSwipe?.content
+			) ?? "";
 
 			if (entry.edit) {
 				await this.setText(content, text);
@@ -371,9 +374,9 @@ export class ChatView extends ItemView {
 		if (!entry.user) {
 			const label = controls.children[2];
 			label.setText(
-				entry.content.length == 0
+				entry.swipes.length == 0
 					? ""
-					: `${entry.index + 1} of ${entry.content.length}`
+					: `${entry.index + 1} of ${entry.swipes.length}`
 			);
 
 			const leftButton = controls.children[3];
@@ -387,11 +390,9 @@ export class ChatView extends ItemView {
 
 			// Show/hide the reasoning button based on conditions
 			if (reasoningButton) {
-				const atLastIndex =
-					entry.content.length > 0 &&
-					entry.index == entry.content.length - 1;
+				const currentSwipe = entry.swipes[entry.index];
 				const reasoning = entry.reasoning;
-				const showReasoningButton = atLastIndex && !!entry.thoughts;
+				const showReasoningButton = !!currentSwipe?.thoughts;
 				reasoningButton.classList.toggle(
 					"asys__hidden",
 					!showReasoningButton
@@ -416,7 +417,7 @@ export class ChatView extends ItemView {
 	syncEntryFromDom(entry: ChatEntry) {
 		const inner = entry.element!.children[0] as HTMLElement;
 		const content = inner.children[1] as HTMLDivElement;
-		entry.content[entry.index] = content.innerText;
+		entry.swipes[entry.index].content = content.innerText;
 	}
 
 	addDocument(file: TFile, append: boolean = true) {
@@ -577,8 +578,7 @@ export class ChatView extends ItemView {
 	}
 
 	async redoResponse(entry: ChatEntry) {
-		entry.index = entry.content.length;
-		entry.thoughts = null;
+		entry.index = entry.swipes.length;
 		entry.reasoning = false;
 		entry.started = false;
 		entry.new = null;
@@ -592,10 +592,9 @@ export class ChatView extends ItemView {
 			edit: false,
 			reasoning: false,
 			new: null,
-			thoughts: null,
 			started: false,
 			index: 0,
-			content: [],
+			swipes: [],
 		});
 		this.makeRequest(response);
 	}
@@ -606,7 +605,7 @@ export class ChatView extends ItemView {
 
 		if (lastEntry && lastEntry.user) {
 			if (!isEmpty) {
-				lastEntry.content[lastEntry.index] += `\n${input}`;
+				lastEntry.swipes[lastEntry.index].content += `\n${input}`;
 				this.syncEntryToDom(lastEntry);
 			}
 			this.getResponse();
@@ -617,10 +616,9 @@ export class ChatView extends ItemView {
 					edit: false,
 					reasoning: false,
 					new: null,
-					thoughts: null,
 					started: false,
 					index: 0,
-					content: [input],
+					swipes: [{ content: input, thoughts: null }],
 				});
 				this.getResponse();
 			}
@@ -641,10 +639,10 @@ export class ChatView extends ItemView {
 				return;
 			}
 			if (entry.new == null) {
-				entry.new = "";
+				entry.new = { content: "", thoughts: null };
 			}
 			entry.reasoning = false;
-			entry.new += text;
+			entry.new.content += text;
 			this.syncEntryToDom(entry);
 			if (isLast) {
 				this.snapToBottom();
@@ -655,16 +653,15 @@ export class ChatView extends ItemView {
 				return;
 			}
 			if (entry.reasoning == false) {
-				entry.thoughts = "";
 				entry.reasoning = true;
 			}
 			if (entry.new == null) {
-				entry.new = "";
+				entry.new = { content: "", thoughts: "" };
 			}
-			if (entry.thoughts == null) {
-				entry.thoughts = "";
+			if (entry.new.thoughts == null) {
+				entry.new.thoughts = "";
 			}
-			entry.thoughts += text;
+			entry.new.thoughts += text;
 			this.syncEntryToDom(entry);
 			if (isLast) {
 				this.snapToBottom();

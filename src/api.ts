@@ -120,7 +120,7 @@ async function getMessages(history: ChatHistory, target: ChatEntry) {
 		}
 		messages.push({
 			role: entry.user ? "user" : "assistant",
-			content: entry.content[entry.index],
+			content: entry.swipes[entry.index].content,
 		});
 	}
 

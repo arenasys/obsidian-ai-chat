@@ -2,13 +2,17 @@ import { App, TFile } from "obsidian";
 
 export const PLUGIN_ID: string = "arenasys-ai-chat";
 
+export interface ChatSwipe {
+	content: string;
+	thoughts: string | null;
+}
 export interface ChatEntry {
 	user: boolean;
 	index: number;
-	content: string[];
+	swipes: ChatSwipe[];
+	new: ChatSwipe | null;
+
 	edit: boolean;
-	new: string | null;
-	thoughts: string | null;
 	reasoning: boolean;
 	started: boolean;
 
