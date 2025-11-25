@@ -144,8 +144,30 @@
 .asys__content {
 	width: 100%;
 	padding: 10px;
-	min-height: 39.5px;
 	--p-spacing: 0px;
+	min-height: 39.5px;
+}
+.asys__content-text {
+}
+.asys__images {
+	display: flex;
+	gap: 8px;
+	flex-wrap: nowrap;
+	overflow-x: auto;
+	overflow-y: hidden;
+	padding-bottom: 2px;
+	margin-top: 6px;
+}
+.asys__image-wrapper {
+	position: relative;
+	display: inline-flex;
+	flex: 0 0 auto;
+}
+.asys__images img {
+	max-width: 200px;
+	max-height: 200px;
+	border-radius: var(--radius-s);
+	border: 1px solid var(--background-modifier-border);
 }
 
 .asys__controls {
@@ -173,6 +195,40 @@
 .asys__icon svg {
 	width: 16px;
 	height: 16px;
+}
+
+.asys__image-action {
+	position: absolute;
+	display: none;
+	background-color: var(--color-base-30);
+	color: var(--text-faint);
+	box-shadow: 0 1px 4px rgb(0 0 0 / 30%) !important;
+}
+
+.asys__image-remove {
+	top: 4px;
+	right: 4px;
+}
+
+.asys__image-download {
+	bottom: 4px;
+	right: 4px;
+}
+
+.asys__image-wrapper:hover .asys__image-action {
+	display: inline;
+}
+
+.asys__image-action:hover {
+	background-color: var(--color-base-20) !important;
+}
+
+.asys__image-remove:hover {
+	color: var(--color-red) !important;
+}
+
+.asys__image-download:hover {
+	color: var(--text-normal) !important;
 }
 
 .asys__settings svg {
@@ -415,7 +471,7 @@
 	max-height: 100px;
 }
 
-.asys__content svg {
+.asys__loader {
 	color: var(--text-muted);
 	height: 22px;
 	position: absolute;

@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS: ChatSettingProfiles = {
 			topP: null,
 			frequencyPenalty: null,
 			reasoning: null,
+			imageSaveFolder: "",
 		},
 	],
 };
@@ -270,6 +271,18 @@ export class ChatSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				});
 		});
+
+		new Setting(containerEl)
+			.setName("Image autosave folder")
+			.addText((text) => {
+				text.inputEl.addClass("asys__setting-medium");
+				text.setPlaceholder("Disabled")
+					.setValue(currentSettings.imageSaveFolder ?? "")
+					.onChange(async (value) => {
+						currentSettings.imageSaveFolder = value.trim();
+						await this.plugin.saveSettings();
+					});
+			});
 
 		new Setting(containerEl)
 			.setName("System prompt")

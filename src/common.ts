@@ -4,6 +4,7 @@ export const PLUGIN_ID: string = "arenasys-ai-chat";
 
 export interface ChatSwipe {
 	content: string;
+	images: string[];
 	thoughts: string | null;
 }
 export interface ChatEntry {
@@ -50,6 +51,7 @@ export interface ChatSettings {
 	topK: number | null;
 	topP: number | null;
 	frequencyPenalty: number | null;
+	imageSaveFolder: string;
 	[index: string]: number | string | null;
 }
 

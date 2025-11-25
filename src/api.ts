@@ -100,8 +100,19 @@ function joinEndpoint(base: string, path: string) {
 	return base + path;
 }
 
-async function getMessages(history: ChatHistory, target: ChatEntry) {
-	let messages: Array<{ role: string; content: string }> = [];
+type OpenAIContent =
+	| string
+	| Array<
+			| { type: "text"; text: string }
+			| { type: "image_url"; image_url: { url: string } }
+	  >;
+
+async function getMessages(
+	history: ChatHistory,
+	target: ChatEntry,
+	options: { includeImages?: boolean } = {}
+) {
+	let messages: Array<{ role: string; content: OpenAIContent }> = [];
 
 	let contents = [];
 	for (const [index, document] of history.documents.entries()) {
@@ -114,13 +125,31 @@ async function getMessages(history: ChatHistory, target: ChatEntry) {
 		);
 	}
 
-	for (const [index, entry] of history.entries.entries()) {
+	for (const [, entry] of history.entries.entries()) {
 		if (target == entry) {
 			break;
 		}
+		const swipe = entry.swipes[entry.index];
+		const text = swipe.content;
+		const images = swipe.images ?? [];
+
+		let content: OpenAIContent = text;
+		if (options.includeImages) {
+			content = [
+				{
+					type: "text",
+					text: text,
+				},
+				...images.map((img) => ({
+					type: "image_url" as const,
+					image_url: { url: img },
+				})),
+			];
+		}
+
 		messages.push({
 			role: entry.user ? "user" : "assistant",
-			content: entry.swipes[entry.index].content,
+			content: content,
 		});
 	}
 
@@ -131,11 +160,39 @@ async function getMessages(history: ChatHistory, target: ChatEntry) {
 		});
 	}
 
-	const text = messages[0]!.content;
+	const text =
+		typeof messages[0]!.content === "string"
+			? messages[0]!.content
+			: messages[0]!.content[0]?.type === "text"
+			? messages[0]!.content[0].text
+			: "";
 	if (contents.length > 0) {
-		messages[0].content = `${contents.join("\n")}\nBEGIN CHAT\n${text}`;
+		const prefix = `${contents.join("\n")}\nBEGIN CHAT\n`;
+		if (typeof messages[0].content === "string") {
+			messages[0].content = `${prefix}${text}`;
+		} else if (Array.isArray(messages[0].content)) {
+			if (messages[0].content.length == 0) {
+				messages[0].content.push({ type: "text", text: "" });
+			}
+			const first = messages[0].content[0];
+			if (first.type === "text") {
+				first.text = `${prefix}${text}`;
+			}
+		}
 	} else {
-		messages[0].content = `BEGIN DOCUMENTS\nNO SHARED DOCUMENTS\nEND DOCUMENTS\nBEGIN CHAT\n${text}`;
+		const prefix =
+			"BEGIN DOCUMENTS\nNO SHARED DOCUMENTS\nEND DOCUMENTS\nBEGIN CHAT\n";
+		if (typeof messages[0].content === "string") {
+			messages[0].content = `${prefix}${text}`;
+		} else if (Array.isArray(messages[0].content)) {
+			if (messages[0].content.length == 0) {
+				messages[0].content.push({ type: "text", text: "" });
+			}
+			const first = messages[0].content[0];
+			if (first.type === "text") {
+				first.text = `${prefix}${text}`;
+			}
+		}
 	}
 
 	return messages;
@@ -147,11 +204,20 @@ export async function getApproxTokens(
 ) {
 	const messages = await getMessages(
 		history,
-		history.entries[history.entries.length - 1]
+		history.entries[history.entries.length - 1],
+		{ includeImages: false }
 	);
 	let count = settings.systemPrompt.length;
 	for (const message of messages) {
-		count += message.content.length;
+		if (typeof message.content === "string") {
+			count += message.content.length;
+		} else {
+			for (const part of message.content) {
+				if (part.type === "text") {
+					count += part.text.length;
+				}
+			}
+		}
 	}
 	return Math.floor(count / CHARS_PER_TOKEN);
 }
@@ -307,6 +373,15 @@ export class API {
 					if (reasoning != undefined) {
 						this.events.emit("reasoning", reasoning);
 					}
+					const images = response.choices[0].delta.images;
+					if (Array.isArray(images)) {
+						for (const image of images) {
+							const url = image?.image_url?.url;
+							if (typeof url === "string" && url.length > 0) {
+								this.events.emit("image", url);
+							}
+						}
+					}
 					break;
 				case "content_block_start": // Anthropic
 					if (response.content_block.type === "text") {
@@ -454,7 +529,9 @@ export class OpenAIAPI extends API {
 		target: ChatEntry,
 		settings: ChatSettings
 	) {
-		const messages = await getMessages(history, target);
+		const messages = await getMessages(history, target, {
+			includeImages: true,
+		});
 		if (settings.systemPrompt.trim().length != 0) {
 			messages.unshift({
 				role: "system",

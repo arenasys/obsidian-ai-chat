@@ -6,12 +6,15 @@ import {
 	TFile,
 	getIcon,
 } from "obsidian";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import {
 	ChatEntry,
 	ChatDocument,
 	ChatHistory,
 	PLUGIN_ID,
 	ChatSettingProfiles,
+	ChatSwipe,
 } from "./common";
 import { API, getAPI, getApproxTokens } from "./api";
 
@@ -24,25 +27,73 @@ function setIcon(el: Element, name: string) {
 
 function setLoader(el: Element) {
 	var loader =
-		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="40" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.4"></animate></circle><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="100" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.2"></animate></circle><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="160" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="0"></animate></circle></svg>';
+		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" class="asys__loader"><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="40" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.4"></animate></circle><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="100" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.2"></animate></circle><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="160" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="0"></animate></circle></svg>';
 	el.empty();
 	el.insertAdjacentHTML("afterbegin", loader);
+}
+
+async function saveImageToFolder(
+	image: string,
+	folder: string,
+	filename: string
+) {
+	try {
+		const targetDir = path.isAbsolute(folder)
+			? folder
+			: path.resolve(folder);
+		await fs.promises.mkdir(targetDir, { recursive: true });
+
+		let data: Buffer;
+		const dataMatch = image.match(
+			/^data:(?:image\/[^;]+);base64,(.+)$/i
+		);
+		if (dataMatch) {
+			data = Buffer.from(dataMatch[1], "base64");
+		} else {
+			const res = await fetch(image);
+			const array = new Uint8Array(await res.arrayBuffer());
+			data = Buffer.from(array);
+		}
+
+		const targetPath = path.join(targetDir, filename);
+		await fs.promises.writeFile(targetPath, data);
+		return true;
+	} catch (err) {
+		console.error("Failed to save image", err);
+		return false;
+	}
+}
+
+function deriveImageExtension(image: string, fallback: string = "png") {
+	let ext = fallback;
+	const dataMatch = image.match(/^data:(image\/[^;]+);base64,(.+)$/i);
+	if (dataMatch) {
+		ext = dataMatch[1].split("/")[1] ?? ext;
+	} else {
+		try {
+			const pathExt = new URL(image).pathname.split(".").pop();
+			if (pathExt && pathExt.length <= 5) {
+				ext = pathExt;
+			}
+		} catch {}
+	}
+	return ext;
 }
 export class ChatView extends ItemView {
 	profiles: ChatSettingProfiles;
 	entryContainer: Element;
 	documentContainer: Element;
 	inputContainer: Element;
+	inputImagesContainer: HTMLElement;
 	tokenContainer: Element;
 	popupContainer: Element;
+	inputImages: string[];
 	history: ChatHistory;
 	working: boolean;
 
 	api: API;
 
-	editOriginal: string;
-	editRevert: boolean;
-	editSkip: boolean;
+	editOriginal: ChatSwipe | null;
 
 	menuSkip: boolean;
 	menuOpen: boolean;
@@ -53,6 +104,18 @@ export class ChatView extends ItemView {
 	constructor(leaf: WorkspaceLeaf, profiles: ChatSettingProfiles) {
 		super(leaf);
 		this.profiles = profiles;
+	}
+
+	async autoSaveImage(image: string) {
+		const folder = this.getSettings().imageSaveFolder?.trim() ?? "";
+		if (folder.length == 0) {
+			return;
+		}
+		const timestamp = (window as any).moment().format("YYYYMMDD_HHmmss");
+		const ext = deriveImageExtension(image);
+		const suffix = Math.random().toString(36).slice(2, 6);
+		const filename = `obsidian_${timestamp}_${suffix}.${ext}`;
+		await saveImageToFolder(image, folder, filename);
 	}
 
 	getSettings() {
@@ -106,18 +169,112 @@ export class ChatView extends ItemView {
 		}
 	}
 
-	addPlainPaste(element: HTMLElement) {
+	renderImages(
+		container: HTMLElement,
+		images: string[],
+		onRemove?: (index: number) => void
+	) {
+		container.empty();
+		if (images.length == 0) {
+			container.addClass("asys__hidden");
+			container.style.display = "none";
+			return;
+		}
+		container.removeClass("asys__hidden");
+		container.style.display = "";
+
+		for (const [index, image] of images.entries()) {
+			const wrapper = container.createDiv({
+				cls: "asys__image-wrapper",
+			});
+			const img = wrapper.createEl("img");
+			img.src = image;
+
+			const download = wrapper.createEl("button", {
+				cls: "asys__image-download asys__image-action asys__icon clickable-icon",
+			});
+			setIcon(download, "download");
+			download.ariaLabel = "Download image";
+			download.addEventListener("click", (event) => {
+				event.preventDefault();
+				event.stopPropagation();
+				const link = document.createElement("a");
+				const timestamp = (window as any).moment().format("YYYYMMDD_HHmmss");
+				const ext = deriveImageExtension(image);
+				const filename = `obsidian_${timestamp}.${ext}`;
+				link.href = image;
+				link.download = filename;
+				document.body.appendChild(link);
+				link.click();
+				link.remove();
+			});
+
+			if (onRemove) {
+				const remove = wrapper.createEl("button", {
+					cls: "asys__image-remove asys__image-action asys__icon clickable-icon",
+				});
+				setIcon(remove, "x");
+				remove.ariaLabel = "Remove image";
+				remove.addEventListener("click", (event) => {
+					event.preventDefault();
+					event.stopPropagation();
+					onRemove(index);
+				});
+			}
+		}
+	}
+
+	syncInputImages() {
+		if (!this.inputImagesContainer) {
+			return;
+		}
+		this.renderImages(
+			this.inputImagesContainer,
+			this.inputImages ?? [],
+			(index) => {
+				this.inputImages.splice(index, 1);
+				this.syncInputImages();
+			}
+		);
+	}
+
+	addPlainPaste(element: HTMLElement, onImage?: (image: string) => void) {
 		element.addEventListener("paste", (event: ClipboardEvent) => {
-			event.preventDefault();
-			const text = event.clipboardData?.getData("text/plain");
+			const clipboard = event.clipboardData;
+			if (!clipboard) {
+				return;
+			}
+			const files = Array.from(clipboard.files ?? []).filter((file) =>
+				file.type.startsWith("image/")
+			);
+
+			const text = clipboard.getData("text/plain");
+			if (text || files.length > 0) {
+				event.preventDefault();
+			}
 			if (text) {
 				document.execCommand("insertText", false, text);
+			}
+
+			for (const file of files) {
+				const reader = new FileReader();
+				reader.onload = () => {
+					if (typeof reader.result === "string") {
+						onImage?.(reader.result);
+					}
+				};
+				reader.readAsDataURL(file);
 			}
 		});
 	}
 
 	addEntry(entry: ChatEntry) {
 		const container = this.entryContainer;
+
+		entry.swipes = entry.swipes.map((swipe) => ({
+			...swipe,
+			images: swipe.images ?? [],
+		}));
 
 		entry.element = container.createEl("div", { cls: "asys__entry" });
 		entry.element.addClass(entry.user ? "asys__right" : "asys__left");
@@ -130,9 +287,85 @@ export class ChatView extends ItemView {
 		const controls = inner.createEl("div", {
 			cls: "asys__controls",
 		});
-		const content = inner.createEl("div", {
+		const contentWrapper = inner.createEl("div", {
 			cls: "asys__content",
 		});
+		const content = contentWrapper.createDiv({
+			cls: "asys__content-text",
+		});
+		const images = contentWrapper.createDiv({
+			cls: "asys__images asys__hidden",
+		});
+
+		const removeOutsidePointerListener = () => {
+			const handler = (entry as any)._outsidePointerHandler as
+				| ((event: PointerEvent) => void)
+				| undefined;
+			if (handler) {
+				document.removeEventListener("pointerdown", handler, true);
+				delete (entry as any)._outsidePointerHandler;
+			}
+		};
+
+		const finishEditing = () => {
+			if (!entry.edit) {
+				return;
+			}
+			entry.edit = false;
+			this.editOriginal = null;
+			removeOutsidePointerListener();
+			this.syncEntryToDom(entry);
+		};
+
+		const revertEditing = () => {
+			if (!entry.edit) {
+				return;
+			}
+			const current = entry.swipes[entry.index];
+			if (current && this.editOriginal) {
+				current.content = this.editOriginal.content;
+				current.images = [...(this.editOriginal.images ?? [])];
+				current.thoughts = this.editOriginal.thoughts;
+			}
+			entry.edit = false;
+			this.editOriginal = null;
+			removeOutsidePointerListener();
+			this.syncEntryToDom(entry);
+		};
+
+		const addOutsidePointerListener = () => {
+			removeOutsidePointerListener();
+			const handler = (event: PointerEvent) => {
+				const target = event.target as HTMLElement | null;
+				const targetButton = target?.closest("button");
+				const insideContent =
+					target?.closest(".asys__content") === contentWrapper;
+				const isEditButton = targetButton === editButton;
+				const isTrashButton = targetButton === trashButton;
+				if (!insideContent && !isEditButton && !isTrashButton) {
+					finishEditing();
+				}
+			};
+			(entry as any)._outsidePointerHandler = handler;
+			document.addEventListener("pointerdown", handler, true);
+		};
+
+		const startEditing = () => {
+			if (entry.edit) {
+				return;
+			}
+
+			entry.reasoning = false;
+
+			const swipe = entry.swipes[entry.index];
+			this.editOriginal = swipe
+				? { ...swipe, images: [...(swipe.images ?? [])] }
+				: null;
+			entry.edit = true;
+			this.syncEntryToDom(entry);
+			addOutsidePointerListener();
+			content.focus();
+		};
 
 		content.addEventListener("input", (event) => {
 			this.syncEntryFromDom(entry);
@@ -159,18 +392,11 @@ export class ChatView extends ItemView {
 		});
 		setIcon(editButton, "more-horizontal");
 		editButton.addEventListener("click", (event) => {
-			if (this.editSkip) {
-				this.editSkip = false;
-				return;
+			if (entry.edit) {
+				finishEditing();
+			} else {
+				startEditing();
 			}
-
-			entry.edit = true;
-			entry.reasoning = false;
-
-			this.editOriginal = entry.swipes[entry.index]?.content ?? "";
-			this.editRevert = false;
-			this.syncEntryToDom(entry);
-			content.focus();
 		});
 
 		if (!entry.user) {
@@ -207,17 +433,19 @@ export class ChatView extends ItemView {
 		let clicked = false;
 		setIcon(trashButton, "x");
 		trashButton.addEventListener("click", (event) => {
+			if (entry.edit) {
+				revertEditing();
+				return;
+			}
 			if (clicked) {
 				this.removeEntry(entry);
-			} else if (!this.editRevert) {
+			} else {
 				clicked = true;
 				setIcon(trashButton, "check");
 				setTimeout(() => {
 					clicked = false;
 					setIcon(trashButton, "x");
 				}, 500);
-			} else {
-				this.editRevert = false;
 			}
 		});
 		trashButton.addEventListener("contextmenu", (event) => {
@@ -229,13 +457,15 @@ export class ChatView extends ItemView {
 			this.entryMenu.showAtPosition({ x: rect.right, y: rect.bottom });
 		});
 
-		content.addEventListener("focusout", (event) => {
-			this.editSkip = event.relatedTarget == editButton;
-			this.editRevert = event.relatedTarget == trashButton;
-			entry.edit = false;
+		this.addPlainPaste(content, (image) => {
+			if (!entry.edit) {
+				return;
+			}
+			const swipe = entry.swipes[entry.index];
+			swipe.images = swipe.images ?? [];
+			swipe.images.push(image);
 			this.syncEntryToDom(entry);
 		});
-		this.addPlainPaste(content);
 
 		entry.element.addEventListener("mouseover", (event) => {
 			if (
@@ -300,16 +530,12 @@ export class ChatView extends ItemView {
 			? null
 			: (controls.children[0] as HTMLElement);
 
-		const content = inner.children[1] as HTMLElement;
+		const contentWrapper = inner.children[1] as HTMLElement;
+		const content = contentWrapper.children[0] as HTMLElement;
+		const images = contentWrapper.children[1] as HTMLElement;
 
 		const editing = content.getAttribute("contenteditable") == "true";
 		if (editing && !entry.edit) {
-			if (this.editRevert) {
-				const current = entry.swipes[entry.index];
-				if (current) {
-					current.content = this.editOriginal;
-				}
-			}
 			entry.element?.removeClass("asys__edit");
 			setIcon(editButton, "more-horizontal");
 			editButton.removeClass("asys__green");
@@ -338,9 +564,9 @@ export class ChatView extends ItemView {
 				content.setText("");
 			}
 		} else {
-			const text = (
-				reasoning ? currentSwipe?.thoughts : currentSwipe?.content
-			) ?? "";
+			const text =
+				(reasoning ? currentSwipe?.thoughts : currentSwipe?.content) ??
+				"";
 
 			if (entry.edit) {
 				await this.setText(content, text);
@@ -412,11 +638,29 @@ export class ChatView extends ItemView {
 					invalid || entry.edit ? "true" : "false";
 			}
 		}
+
+		const imagesToRender = (currentSwipe?.images ?? []).filter(
+			(img) => !!img
+		);
+		const allowRemove = entry.edit;
+		this.renderImages(
+			images,
+			imagesToRender,
+			allowRemove
+				? (index) => {
+						const swipe = entry.swipes[entry.index];
+						if (!swipe?.images) return;
+						swipe.images.splice(index, 1);
+						this.syncEntryToDom(entry);
+				  }
+				: undefined
+		);
 	}
 
 	syncEntryFromDom(entry: ChatEntry) {
 		const inner = entry.element!.children[0] as HTMLElement;
-		const content = inner.children[1] as HTMLDivElement;
+		const contentWrapper = inner.children[1] as HTMLDivElement;
+		const content = contentWrapper.children[0] as HTMLDivElement;
 		entry.swipes[entry.index].content = content.innerText;
 	}
 
@@ -600,28 +844,44 @@ export class ChatView extends ItemView {
 	}
 
 	async handleInput(input: string) {
-		const isEmpty = input.trim().length == 0;
+		const images = [...(this.inputImages ?? [])];
+		this.inputImages = [];
+		this.syncInputImages();
+
+		const hasText = input.trim().length > 0;
+		const hasImages = images.length > 0;
+		const isEmpty = !hasText && !hasImages;
 		const lastEntry = this.history.entries[this.history.entries.length - 1];
 
-		if (lastEntry && lastEntry.user) {
-			if (!isEmpty) {
-				lastEntry.swipes[lastEntry.index].content += `\n${input}`;
-				this.syncEntryToDom(lastEntry);
-			}
-			this.getResponse();
-		} else {
-			if (!isEmpty) {
-				this.addEntry({
-					user: true,
-					edit: false,
-					reasoning: false,
-					new: null,
-					started: false,
-					index: 0,
-					swipes: [{ content: input, thoughts: null }],
-				});
+		if (isEmpty) {
+			if (lastEntry && lastEntry.user) {
 				this.getResponse();
 			}
+			return;
+		}
+
+		if (lastEntry && lastEntry.user) {
+			const swipe = lastEntry.swipes[lastEntry.index];
+			if (hasText) {
+				const separator =
+					swipe.content.length > 0 && input.length > 0 ? "\n" : "";
+				swipe.content += `${separator}${input}`;
+			}
+			swipe.images = swipe.images ?? [];
+			swipe.images.push(...images);
+			this.syncEntryToDom(lastEntry);
+			this.getResponse();
+		} else {
+			this.addEntry({
+				user: true,
+				edit: false,
+				reasoning: false,
+				new: null,
+				started: false,
+				index: 0,
+				swipes: [{ content: input, images: images, thoughts: null }],
+			});
+			this.getResponse();
 		}
 	}
 
@@ -639,10 +899,25 @@ export class ChatView extends ItemView {
 				return;
 			}
 			if (entry.new == null) {
-				entry.new = { content: "", thoughts: null };
+				entry.new = { content: "", images: [], thoughts: null };
 			}
 			entry.reasoning = false;
 			entry.new.content += text;
+			this.syncEntryToDom(entry);
+			if (isLast) {
+				this.snapToBottom();
+			}
+		});
+		this.api.events.on("image", (image: string) => {
+			if (typeof image !== "string" || image.length == 0) {
+				return;
+			}
+			this.autoSaveImage(image);
+			if (entry.new == null) {
+				entry.new = { content: "", images: [], thoughts: null };
+			}
+			entry.new.images = entry.new.images ?? [];
+			entry.new.images.push(image);
 			this.syncEntryToDom(entry);
 			if (isLast) {
 				this.snapToBottom();
@@ -656,7 +931,7 @@ export class ChatView extends ItemView {
 				entry.reasoning = true;
 			}
 			if (entry.new == null) {
-				entry.new = { content: "", thoughts: "" };
+				entry.new = { content: "", images: [], thoughts: "" };
 			}
 			if (entry.new.thoughts == null) {
 				entry.new.thoughts = "";
@@ -680,6 +955,7 @@ export class ChatView extends ItemView {
 		});
 		this.api.events.on("done", () => {
 			console.log(Date.now(), "Done");
+			entry.reasoning = false;
 			this.finishEntry(entry);
 		});
 		this.api.events.on("error", (error: string) => {
@@ -716,6 +992,7 @@ export class ChatView extends ItemView {
 			documents: [],
 			app: this.app,
 		};
+		this.inputImages = [];
 
 		const background = this.containerEl.children[1];
 		background.addClass("asys__background");
@@ -831,7 +1108,15 @@ export class ChatView extends ItemView {
 				input.empty();
 			}
 		});
-		this.addPlainPaste(input);
+		this.addPlainPaste(input, (image) => {
+			this.inputImages.push(image);
+			this.syncInputImages();
+		});
+
+		this.inputImagesContainer = this.inputContainer.createDiv({
+			cls: "asys__images asys__input-images asys__hidden",
+		});
+		this.syncInputImages();
 
 		this.popupContainer = background.createEl("div", {
 			cls: "asys__popup asys__fadeOut",
