@@ -21,7 +21,7 @@ import {
 	imageAssetFromDataUrl,
 	writeImageAssetToFile,
 } from "./common";
-import { API, getAPI, getApproxTokens } from "./api";
+import { API, getAPI } from "./api";
 
 export const VIEW_TYPE_CHAT = "arenasys-ai-chat-view";
 
@@ -38,8 +38,71 @@ function setLoader(el: Element) {
 }
 
 class ImageModal extends Modal {
-	constructor(app: App, private asset: ImageAsset, private alt?: string) {
+	private mainImageEl: HTMLImageElement | null = null;
+	private thumbsEl: HTMLElement | null = null;
+	private currentIndex: number;
+
+	constructor(
+		app: App,
+		private images: ImageAsset[],
+		selectedIndex: number,
+		private alt?: string
+	) {
 		super(app);
+		this.currentIndex =
+			this.images.length == 0
+				? 0
+				: Math.min(Math.max(selectedIndex, 0), this.images.length - 1);
+	}
+
+	private centerSelectedThumb(instant: boolean = false) {
+		if (!this.thumbsEl) return;
+		const selected = this.thumbsEl.children[
+			this.currentIndex
+		] as HTMLElement | null;
+		if (!selected) return;
+
+		const container = this.thumbsEl;
+		const scrollTo = () => {
+			const offset =
+				selected.offsetLeft +
+				selected.offsetWidth / 2 -
+				container.clientWidth / 2;
+			const maxScroll = Math.max(
+				0,
+				container.scrollWidth - container.clientWidth
+			);
+			const target = Math.max(0, Math.min(maxScroll, offset));
+			container.scrollTo({
+				left: target,
+				behavior: instant ? "auto" : "smooth",
+			});
+		};
+
+		if (instant) {
+			scrollTo();
+		} else {
+			requestAnimationFrame(scrollTo);
+		}
+	}
+
+	private setCurrentImage(index: number) {
+		if (index < 0 || index >= this.images.length) return;
+		this.currentIndex = index;
+		const asset = this.images[this.currentIndex];
+		if (this.mainImageEl) {
+			this.mainImageEl.src = asset.url;
+			this.mainImageEl.alt = this.alt ?? "";
+		}
+		if (this.thumbsEl) {
+			Array.from(this.thumbsEl.children).forEach((child, i) => {
+				(child as HTMLElement).toggleClass(
+					"asys__image-selected",
+					i === this.currentIndex
+				);
+			});
+		}
+		this.centerSelectedThumb();
 	}
 
 	onOpen() {
@@ -47,11 +110,53 @@ class ImageModal extends Modal {
 		this.containerEl.addClass("asys__image-modal-container");
 		contentEl.empty();
 
+		if (this.images.length == 0) {
+			this.close();
+			return;
+		}
+
 		const containerEl = contentEl.createDiv({ cls: "asys__image-modal" });
-		const img = containerEl.createEl("img", {
-			attr: { src: this.asset.url, alt: this.alt ?? "" },
+		if (this.images.length === 1) {
+			containerEl.addClass("asys__image-single");
+		}
+		const mainEl = containerEl.createDiv({ cls: "asys__image-modal-main" });
+		const asset = this.images[this.currentIndex];
+		this.mainImageEl = mainEl.createEl("img", {
+			attr: { src: asset.url, alt: this.alt ?? "" },
 		});
-		img.addEventListener("click", () => this.close());
+
+		if (this.images.length > 1) {
+			this.thumbsEl = containerEl.createDiv({
+				cls: "asys__images asys__image-modal-images",
+			});
+			this.images.forEach((image, index) => {
+				const wrapper = this.thumbsEl!.createDiv({
+					cls: "asys__image-wrapper",
+				});
+				if (index === this.currentIndex) {
+					wrapper.addClass("asys__image-selected");
+				}
+				const thumb = wrapper.createEl("img", {
+					attr: { src: image.url, alt: "" },
+				});
+				const download = wrapper.createEl("button", {
+					cls: "asys__image-download asys__image-action asys__icon clickable-icon",
+				});
+				setIcon(download, "download");
+				download.ariaLabel = "Download image";
+				download.addEventListener("click", (event) => {
+					event.preventDefault();
+					event.stopPropagation();
+					downloadImageAsset(image);
+				});
+				thumb.addEventListener("click", (event) => {
+					event.preventDefault();
+					event.stopPropagation();
+					this.setCurrentImage(index);
+				});
+			});
+			this.centerSelectedThumb(true);
+		}
 	}
 
 	onClose() {
@@ -94,6 +199,18 @@ function deriveImageExtension(image: ImageAsset, fallback: string = "png") {
 	return map[image.mime] ?? fallback;
 }
 
+function downloadImageAsset(image: ImageAsset) {
+	const link = document.createElement("a");
+	const timestamp = (window as any).moment().format("YYYYMMDD_HHmmss");
+	const ext = deriveImageExtension(image);
+	const filename = `obsidian_${timestamp}.${ext}`;
+	link.href = image.url;
+	link.download = filename;
+	document.body.appendChild(link);
+	link.click();
+	link.remove();
+}
+
 async function createImageAsset(source: string): Promise<ImageAsset> {
 	if (source.startsWith("data:")) {
 		return imageAssetFromDataUrl(source);
@@ -110,7 +227,6 @@ export class ChatView extends ItemView {
 	documentContainer: Element;
 	inputContainer: Element;
 	inputImagesContainer: HTMLElement;
-	tokenContainer: Element;
 	popupContainer: Element;
 	inputImages: ImageAsset[];
 	history: ChatHistory;
@@ -131,8 +247,32 @@ export class ChatView extends ItemView {
 		this.profiles = profiles;
 	}
 
-	private openImageModal(image: ImageAsset, alt?: string) {
-		new ImageModal(this.app, image, alt).open();
+	private openImageModal(
+		image: ImageAsset,
+		alt?: string,
+		galleryImages?: ImageAsset[]
+	) {
+		const images = galleryImages ?? this.getVisibleImages();
+		let selectedIndex = images.findIndex((img) => img.url === image.url);
+		if (selectedIndex === -1) {
+			images.push(image);
+			selectedIndex = images.length - 1;
+		}
+		new ImageModal(this.app, images, selectedIndex, alt).open();
+	}
+
+	private getVisibleImages(): ImageAsset[] {
+		const images: ImageAsset[] = [];
+		for (const entry of this.history?.entries ?? []) {
+			const swipe =
+				entry.new ??
+				(entry.index >= 0 && entry.index < entry.swipes.length
+					? entry.swipes[entry.index]
+					: null);
+			if (!swipe?.images) continue;
+			images.push(...swipe.images.filter(Boolean));
+		}
+		return images;
 	}
 
 	async autoSaveImage(image: ImageAsset) {
@@ -201,7 +341,8 @@ export class ChatView extends ItemView {
 	renderImages(
 		container: HTMLElement,
 		images: ImageAsset[],
-		onRemove?: (index: number) => void
+		onRemove?: (index: number) => void,
+		galleryImages?: ImageAsset[]
 	) {
 		container.empty();
 		if (images.length == 0) {
@@ -219,7 +360,7 @@ export class ChatView extends ItemView {
 			const img = wrapper.createEl("img");
 			img.src = image.url;
 			img.addEventListener("click", () =>
-				this.openImageModal(image, img.alt)
+				this.openImageModal(image, img.alt, galleryImages ?? undefined)
 			);
 
 			const download = wrapper.createEl("button", {
@@ -230,17 +371,7 @@ export class ChatView extends ItemView {
 			download.addEventListener("click", (event) => {
 				event.preventDefault();
 				event.stopPropagation();
-				const link = document.createElement("a");
-				const timestamp = (window as any)
-					.moment()
-					.format("YYYYMMDD_HHmmss");
-				const ext = deriveImageExtension(image);
-				const filename = `obsidian_${timestamp}.${ext}`;
-				link.href = image.url;
-				link.download = filename;
-				document.body.appendChild(link);
-				link.click();
-				link.remove();
+				downloadImageAsset(image);
 			});
 
 			if (onRemove) {
@@ -268,14 +399,12 @@ export class ChatView extends ItemView {
 			(index) => {
 				this.inputImages.splice(index, 1);
 				this.syncInputImages();
-			}
+			},
+			this.inputImages
 		);
 	}
 
-	addPlainPaste(
-		element: HTMLElement,
-		onImage?: (image: ImageAsset) => void
-	) {
+	addPlainPaste(element: HTMLElement, onImage?: (image: ImageAsset) => void) {
 		element.addEventListener("paste", (event: ClipboardEvent) => {
 			const clipboard = event.clipboardData;
 			if (!clipboard) {
@@ -511,21 +640,6 @@ export class ChatView extends ItemView {
 			this.syncEntryToDom(entry);
 		});
 
-		entry.element.addEventListener("mouseover", (event) => {
-			if (
-				entry == this.history.entries[this.history.entries.length - 1]
-			) {
-				this.tokenContainer.removeClass("asys__hidden");
-			}
-		});
-		entry.element.addEventListener("mouseout", (event) => {
-			if (
-				entry == this.history.entries[this.history.entries.length - 1]
-			) {
-				this.tokenContainer.addClass("asys__hidden");
-			}
-		});
-
 		this.syncEntryToDom(entry);
 		this.history.entries.push(entry);
 		return entry;
@@ -533,12 +647,6 @@ export class ChatView extends ItemView {
 
 	removeEntry(entry: ChatEntry) {
 		try {
-			if (
-				entry == this.history.entries[this.history.entries.length - 1]
-			) {
-				this.tokenContainer.addClass("asys__hidden");
-			}
-
 			this.entryContainer.removeChild(entry.element!);
 			this.history.entries.remove(entry);
 		} catch {}
@@ -828,11 +936,6 @@ export class ChatView extends ItemView {
 		}
 	}
 
-	async checkCurrentTokens() {
-		const tokens = await getApproxTokens(this.history, this.getSettings());
-		this.tokenContainer.setText(`${tokens} Tokens`);
-	}
-
 	syncGenerateButtonToDom() {
 		const button = this.inputContainer.children[0];
 		if (this.working) {
@@ -1119,10 +1222,6 @@ export class ChatView extends ItemView {
 			this.setCurrentDocument(current);
 		}
 
-		this.tokenContainer = background.createDiv({
-			cls: "asys__tokens asys__hidden",
-		});
-
 		this.inputContainer = background.createDiv({
 			cls: "asys__input-container",
 		});
@@ -1177,14 +1276,10 @@ export class ChatView extends ItemView {
 		this.registerEvent(
 			this.app.workspace.on("file-open", (file) => {
 				this.setCurrentDocument(file!);
-				this.checkCurrentTokens();
 			})
 		);
 		this.registerInterval(
 			window.setInterval(() => this.checkCurrentDocument(), 1000)
-		);
-		this.registerInterval(
-			window.setInterval(() => this.checkCurrentTokens(), 5000)
 		);
 	}
 

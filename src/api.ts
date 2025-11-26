@@ -21,7 +21,6 @@ function sanitize(text: string) {
 }
 
 const ERROR_SUFFIX = "Press to dismiss.";
-const CHARS_PER_TOKEN = 3.35;
 
 const ANTHROPIC_ENDPOINT: string = "https://api.anthropic.com";
 const ANTHROPIC_PATH: string = "/v1/messages";
@@ -122,6 +121,22 @@ async function getMessages(
 	let messages: Array<{ role: string; content: OpenAIContent }> = [];
 
 	let contents = [];
+
+	const resolveSelectedSwipe = (entry: ChatEntry) => {
+		const { index, swipes } = entry;
+		if (Number.isInteger(index) && index >= 0 && index < swipes.length) {
+			return swipes[index];
+		}
+		if (Number.isInteger(index) && index === swipes.length && entry.new) {
+			return entry.new;
+		}
+		if (swipes.length > 0) {
+			entry.index = swipes.length - 1;
+			return swipes[entry.index];
+		}
+		return entry.new;
+	};
+
 	for (const [index, document] of history.documents.entries()) {
 		if (document.mute) {
 			continue;
@@ -136,7 +151,10 @@ async function getMessages(
 		if (target == entry) {
 			break;
 		}
-		const swipe = entry.swipes[entry.index];
+		const swipe = resolveSelectedSwipe(entry);
+		if (!swipe) {
+			continue;
+		}
 		const text = swipe.content;
 		const images = swipe.images ?? [];
 
@@ -206,30 +224,6 @@ async function getMessages(
 	}
 
 	return messages;
-}
-
-export async function getApproxTokens(
-	history: ChatHistory,
-	settings: ChatSettings
-) {
-	const messages = await getMessages(
-		history,
-		history.entries[history.entries.length - 1],
-		{ includeImages: false }
-	);
-	let count = settings.systemPrompt.length;
-	for (const message of messages) {
-		if (typeof message.content === "string") {
-			count += message.content.length;
-		} else {
-			for (const part of message.content) {
-				if (part.type === "text") {
-					count += part.text.length;
-				}
-			}
-		}
-	}
-	return Math.floor(count / CHARS_PER_TOKEN);
 }
 
 function getModel(settings: ChatSettings, mapping: Record<string, string>) {
