@@ -479,3 +479,26 @@
 	left: 12px;
 	transform: translateY(-50%);
 }
+
+.asys__image-modal {
+	padding: 0;
+	margin-top: 10px;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	background: rgba(0, 0, 0, 0.75);
+}
+
+.asys__image-modal img {
+	max-width: 90vw;
+	max-height: 90vh;
+	object-fit: contain;
+	cursor: zoom-out;
+	border-radius: var(--radius-m);
+}
+
+.asys__image-modal-container .modal {
+	width: unset;
+	max-width: unset;
+	max-height: unset;
+}

@@ -1,8 +1,10 @@
 import {
+	App,
 	ItemView,
 	WorkspaceLeaf,
 	MarkdownRenderer,
 	Menu,
+	Modal,
 	TFile,
 	getIcon,
 } from "obsidian";
@@ -32,6 +34,30 @@ function setLoader(el: Element) {
 	el.insertAdjacentHTML("afterbegin", loader);
 }
 
+class ImageModal extends Modal {
+	constructor(app: App, private src: string, private alt?: string) {
+		super(app);
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		this.containerEl.addClass("asys__image-modal-container");
+		contentEl.empty();
+
+		const containerEl = contentEl.createDiv({ cls: "asys__image-modal" });
+		const img = containerEl.createEl("img", {
+			attr: { src: this.src, alt: this.alt ?? "" },
+		});
+		img.addEventListener("click", () => this.close());
+	}
+
+	onClose() {
+		this.contentEl.empty();
+		this.contentEl.removeClass("asys__image-modal");
+		this.containerEl.removeClass("asys__image-modal-container");
+	}
+}
+
 async function saveImageToFolder(
 	image: string,
 	folder: string,
@@ -44,9 +70,7 @@ async function saveImageToFolder(
 		await fs.promises.mkdir(targetDir, { recursive: true });
 
 		let data: Buffer;
-		const dataMatch = image.match(
-			/^data:(?:image\/[^;]+);base64,(.+)$/i
-		);
+		const dataMatch = image.match(/^data:(?:image\/[^;]+);base64,(.+)$/i);
 		if (dataMatch) {
 			data = Buffer.from(dataMatch[1], "base64");
 		} else {
@@ -104,6 +128,10 @@ export class ChatView extends ItemView {
 	constructor(leaf: WorkspaceLeaf, profiles: ChatSettingProfiles) {
 		super(leaf);
 		this.profiles = profiles;
+	}
+
+	private openImageModal(image: string, alt?: string) {
+		new ImageModal(this.app, image, alt).open();
 	}
 
 	async autoSaveImage(image: string) {
@@ -189,6 +217,9 @@ export class ChatView extends ItemView {
 			});
 			const img = wrapper.createEl("img");
 			img.src = image;
+			img.addEventListener("click", () =>
+				this.openImageModal(image, img.alt)
+			);
 
 			const download = wrapper.createEl("button", {
 				cls: "asys__image-download asys__image-action asys__icon clickable-icon",
@@ -199,7 +230,9 @@ export class ChatView extends ItemView {
 				event.preventDefault();
 				event.stopPropagation();
 				const link = document.createElement("a");
-				const timestamp = (window as any).moment().format("YYYYMMDD_HHmmss");
+				const timestamp = (window as any)
+					.moment()
+					.format("YYYYMMDD_HHmmss");
 				const ext = deriveImageExtension(image);
 				const filename = `obsidian_${timestamp}.${ext}`;
 				link.href = image;
