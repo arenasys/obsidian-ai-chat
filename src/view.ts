@@ -17,6 +17,9 @@ import {
 	PLUGIN_ID,
 	ChatSettingProfiles,
 	ChatSwipe,
+	ImageAsset,
+	imageAssetFromDataUrl,
+	writeImageAssetToFile,
 } from "./common";
 import { API, getAPI, getApproxTokens } from "./api";
 
@@ -35,7 +38,7 @@ function setLoader(el: Element) {
 }
 
 class ImageModal extends Modal {
-	constructor(app: App, private src: string, private alt?: string) {
+	constructor(app: App, private asset: ImageAsset, private alt?: string) {
 		super(app);
 	}
 
@@ -46,7 +49,7 @@ class ImageModal extends Modal {
 
 		const containerEl = contentEl.createDiv({ cls: "asys__image-modal" });
 		const img = containerEl.createEl("img", {
-			attr: { src: this.src, alt: this.alt ?? "" },
+			attr: { src: this.asset.url, alt: this.alt ?? "" },
 		});
 		img.addEventListener("click", () => this.close());
 	}
@@ -59,7 +62,7 @@ class ImageModal extends Modal {
 }
 
 async function saveImageToFolder(
-	image: string,
+	image: ImageAsset,
 	folder: string,
 	filename: string
 ) {
@@ -69,18 +72,8 @@ async function saveImageToFolder(
 			: path.resolve(folder);
 		await fs.promises.mkdir(targetDir, { recursive: true });
 
-		let data: Buffer;
-		const dataMatch = image.match(/^data:(?:image\/[^;]+);base64,(.+)$/i);
-		if (dataMatch) {
-			data = Buffer.from(dataMatch[1], "base64");
-		} else {
-			const res = await fetch(image);
-			const array = new Uint8Array(await res.arrayBuffer());
-			data = Buffer.from(array);
-		}
-
 		const targetPath = path.join(targetDir, filename);
-		await fs.promises.writeFile(targetPath, data);
+		await writeImageAssetToFile(image, targetPath);
 		return true;
 	} catch (err) {
 		console.error("Failed to save image", err);
@@ -88,20 +81,28 @@ async function saveImageToFolder(
 	}
 }
 
-function deriveImageExtension(image: string, fallback: string = "png") {
-	let ext = fallback;
-	const dataMatch = image.match(/^data:(image\/[^;]+);base64,(.+)$/i);
-	if (dataMatch) {
-		ext = dataMatch[1].split("/")[1] ?? ext;
-	} else {
-		try {
-			const pathExt = new URL(image).pathname.split(".").pop();
-			if (pathExt && pathExt.length <= 5) {
-				ext = pathExt;
-			}
-		} catch {}
+function deriveImageExtension(image: ImageAsset, fallback: string = "png") {
+	const map: Record<string, string> = {
+		"image/png": "png",
+		"image/jpeg": "jpg",
+		"image/webp": "webp",
+		"image/gif": "gif",
+		"image/bmp": "bmp",
+		"image/avif": "avif",
+		"image/svg+xml": "svg",
+	};
+	return map[image.mime] ?? fallback;
+}
+
+async function createImageAsset(source: string): Promise<ImageAsset> {
+	if (source.startsWith("data:")) {
+		return imageAssetFromDataUrl(source);
 	}
-	return ext;
+	const res = await fetch(source);
+	const blob = await res.blob();
+	const mime = blob.type || "application/octet-stream";
+	const url = URL.createObjectURL(blob);
+	return { blob, mime, url };
 }
 export class ChatView extends ItemView {
 	profiles: ChatSettingProfiles;
@@ -111,7 +112,7 @@ export class ChatView extends ItemView {
 	inputImagesContainer: HTMLElement;
 	tokenContainer: Element;
 	popupContainer: Element;
-	inputImages: string[];
+	inputImages: ImageAsset[];
 	history: ChatHistory;
 	working: boolean;
 
@@ -130,11 +131,11 @@ export class ChatView extends ItemView {
 		this.profiles = profiles;
 	}
 
-	private openImageModal(image: string, alt?: string) {
+	private openImageModal(image: ImageAsset, alt?: string) {
 		new ImageModal(this.app, image, alt).open();
 	}
 
-	async autoSaveImage(image: string) {
+	async autoSaveImage(image: ImageAsset) {
 		const folder = this.getSettings().imageSaveFolder?.trim() ?? "";
 		if (folder.length == 0) {
 			return;
@@ -199,7 +200,7 @@ export class ChatView extends ItemView {
 
 	renderImages(
 		container: HTMLElement,
-		images: string[],
+		images: ImageAsset[],
 		onRemove?: (index: number) => void
 	) {
 		container.empty();
@@ -216,7 +217,7 @@ export class ChatView extends ItemView {
 				cls: "asys__image-wrapper",
 			});
 			const img = wrapper.createEl("img");
-			img.src = image;
+			img.src = image.url;
 			img.addEventListener("click", () =>
 				this.openImageModal(image, img.alt)
 			);
@@ -235,7 +236,7 @@ export class ChatView extends ItemView {
 					.format("YYYYMMDD_HHmmss");
 				const ext = deriveImageExtension(image);
 				const filename = `obsidian_${timestamp}.${ext}`;
-				link.href = image;
+				link.href = image.url;
 				link.download = filename;
 				document.body.appendChild(link);
 				link.click();
@@ -271,7 +272,10 @@ export class ChatView extends ItemView {
 		);
 	}
 
-	addPlainPaste(element: HTMLElement, onImage?: (image: string) => void) {
+	addPlainPaste(
+		element: HTMLElement,
+		onImage?: (image: ImageAsset) => void
+	) {
 		element.addEventListener("paste", (event: ClipboardEvent) => {
 			const clipboard = event.clipboardData;
 			if (!clipboard) {
@@ -291,9 +295,16 @@ export class ChatView extends ItemView {
 
 			for (const file of files) {
 				const reader = new FileReader();
-				reader.onload = () => {
+				reader.onload = async () => {
 					if (typeof reader.result === "string") {
-						onImage?.(reader.result);
+						try {
+							const asset = await imageAssetFromDataUrl(
+								reader.result
+							);
+							onImage?.(asset);
+						} catch (err) {
+							console.error("Failed to parse pasted image", err);
+						}
 					}
 				};
 				reader.readAsDataURL(file);
@@ -941,19 +952,24 @@ export class ChatView extends ItemView {
 				this.snapToBottom();
 			}
 		});
-		this.api.events.on("image", (image: string) => {
+		this.api.events.on("image", async (image: string) => {
 			if (typeof image !== "string" || image.length == 0) {
 				return;
 			}
-			this.autoSaveImage(image);
-			if (entry.new == null) {
-				entry.new = { content: "", images: [], thoughts: null };
-			}
-			entry.new.images = entry.new.images ?? [];
-			entry.new.images.push(image);
-			this.syncEntryToDom(entry);
-			if (isLast) {
-				this.snapToBottom();
+			try {
+				const asset = await createImageAsset(image);
+				this.autoSaveImage(asset);
+				if (entry.new == null) {
+					entry.new = { content: "", images: [], thoughts: null };
+				}
+				entry.new.images = entry.new.images ?? [];
+				entry.new.images.push(asset);
+				this.syncEntryToDom(entry);
+				if (isLast) {
+					this.snapToBottom();
+				}
+			} catch (err) {
+				console.error("Failed to handle streamed image", err);
 			}
 		});
 		this.api.events.on("reasoning", (text: string) => {

@@ -1,4 +1,11 @@
-import { ChatEntry, ChatHistory, ChatSettings, HTTPStatus } from "./common";
+import {
+	ChatEntry,
+	ChatHistory,
+	ChatSettings,
+	HTTPStatus,
+	ImageAsset,
+	imageAssetToDataUrl,
+} from "./common";
 import { createParser, EventSourceParser } from "eventsource-parser";
 import { EventEmitter } from "node:events";
 import { ClientRequest, IncomingMessage } from "node:http";
@@ -135,14 +142,17 @@ async function getMessages(
 
 		let content: OpenAIContent = text;
 		if (options.includeImages) {
+			const imageUrls = await Promise.all(
+				images.map((img: ImageAsset) => imageAssetToDataUrl(img))
+			);
 			content = [
 				{
 					type: "text",
 					text: text,
 				},
-				...images.map((img) => ({
+				...imageUrls.map((url) => ({
 					type: "image_url" as const,
-					image_url: { url: img },
+					image_url: { url },
 				})),
 			];
 		}
