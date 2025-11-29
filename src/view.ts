@@ -27,16 +27,17 @@ import {
 	autoSaveImageAsset,
 	imageAssetFromDataUrl,
 	imageAssetFromFile,
+	addImageDropTarget,
 } from "./images";
 
 export const VIEW_TYPE_CHAT = "arenasys-ai-chat-view";
 export class ChatView extends ItemView {
 	profiles: ChatSettingProfiles;
-	entryContainer: Element;
-	documentContainer: Element;
-	inputContainer: Element;
+	entryContainer: HTMLElement;
+	documentContainer: HTMLElement;
+	inputContainer: HTMLElement;
 	inputImagesContainer: HTMLElement;
-	popupContainer: Element;
+	popupContainer: HTMLElement;
 	inputImages: ImageAsset[];
 	imageLists: WeakMap<HTMLElement, ImageList> = new WeakMap();
 	history: ChatHistory;
@@ -390,6 +391,16 @@ export class ChatView extends ItemView {
 			swipe.images = swipe.images ?? [];
 			swipe.images.push(image);
 			this.syncEntryToDom(entry);
+		});
+		addImageDropTarget(entry.element, {
+			canAccept: () => entry.edit,
+			onImages: (images) => {
+				const swipe = entry.swipes[entry.index];
+				if (!swipe) return;
+				swipe.images = swipe.images ?? [];
+				swipe.images.push(...images);
+				this.syncEntryToDom(entry);
+			},
 		});
 
 		this.syncEntryToDom(entry);
@@ -1024,6 +1035,12 @@ export class ChatView extends ItemView {
 		this.addPlainPaste(input, (image) => {
 			this.inputImages.push(image);
 			this.syncInputImages();
+		});
+		addImageDropTarget(this.inputContainer, {
+			onImages: (images) => {
+				this.inputImages.push(...images);
+				this.syncInputImages();
+			},
 		});
 
 		this.inputImagesContainer = this.inputContainer.createDiv({

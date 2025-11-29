@@ -30,18 +30,18 @@ export interface ChatEntry {
 	reasoning: boolean;
 	started: boolean;
 
-	element?: Element;
+	element?: HTMLElement;
 }
 export interface ChatDocument {
 	file: TFile;
-	element?: Element;
+	element?: HTMLElement;
 	pin: boolean;
 	mute: boolean;
 }
 export interface ChatHistory {
 	entries: ChatEntry[];
 	documents: ChatDocument[];
-	element?: Element;
+	element?: HTMLElement;
 	app?: App;
 }
 

@@ -514,3 +514,76 @@ export async function imageAssetFromFile(file: File): Promise<ImageAsset> {
 	const url = URL.createObjectURL(blob);
 	return { blob, mime: file.type, url };
 }
+
+export function addImageDropTarget(
+	element: HTMLElement,
+	opts: {
+		onImages: (images: ImageAsset[]) => void;
+		canAccept?: () => boolean;
+	}
+) {
+	const activeClass = "asys__drop-active";
+	const canAcceptDrop = (event: DragEvent) => {
+		if (opts.canAccept && !opts.canAccept()) {
+			return false;
+		}
+		const data = event.dataTransfer;
+		if (!data) return false;
+		const items = Array.from(data.items ?? []);
+		const hasFileItem = items.some(
+			(item) =>
+				item.kind === "file" &&
+				(item.type.startsWith("image/") || item.type === "")
+		);
+		const hasFileType =
+			Array.from(data.types ?? []).includes("Files") ||
+			(data.files?.length ?? 0) > 0;
+		return hasFileItem || hasFileType;
+	};
+
+	const clear = () => {
+		element.removeClass(activeClass);
+	};
+
+	element.addEventListener("dragenter", (event) => {
+		if (!canAcceptDrop(event)) return;
+		event.preventDefault();
+		element.addClass(activeClass);
+	});
+
+	element.addEventListener("dragover", (event) => {
+		if (!canAcceptDrop(event)) return;
+		event.preventDefault();
+		if (event.dataTransfer) {
+			event.dataTransfer.dropEffect = "copy";
+		}
+		element.addClass(activeClass);
+	});
+
+	element.addEventListener("dragleave", (_event) => {
+		clear();
+	});
+
+	element.addEventListener("drop", (event) => {
+		if (!canAcceptDrop(event)) return;
+		event.preventDefault();
+		const files = Array.from(event.dataTransfer?.files ?? []).filter(
+			(file) => file.type.startsWith("image/")
+		);
+		if (files.length === 0) {
+			clear();
+			return;
+		}
+
+		Promise.all(files.map((file) => imageAssetFromFile(file)))
+			.then((assets) => {
+				opts.onImages(assets);
+			})
+			.catch((err) => {
+				console.error("Failed to handle dropped image", err);
+			})
+			.finally(() => {
+				clear();
+			});
+	});
+}
