@@ -474,7 +474,7 @@ export async function imageAssetToDataUrl(image: ImageAsset) {
 	return `data:${image.mime};base64,${base64}`;
 }
 
-function guessMimeFromPath(
+export function guessMimeFromPath(
 	filePath: string,
 	fallback: string = "application/octet-stream"
 ) {
@@ -506,6 +506,11 @@ export async function imageAssetFromFS(
 export async function imageAssetToFS(image: ImageAsset, filePath: string) {
 	const buffer = Buffer.from(await image.blob.arrayBuffer());
 	await fs.promises.writeFile(filePath, buffer);
+}
+
+export async function imageAssetFromBlob(blob: Blob): Promise<ImageAsset> {
+	const url = URL.createObjectURL(blob);
+	return { blob, mime: blob.type, url };
 }
 
 export async function imageAssetFromFile(file: File): Promise<ImageAsset> {

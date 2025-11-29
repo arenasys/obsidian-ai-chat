@@ -4,7 +4,12 @@ import { EventEmitter } from "node:events";
 import { ClientRequest, IncomingMessage } from "node:http";
 import { request } from "node:https";
 import { request as request_http } from "node:http";
-import { ImageAsset, imageAssetToDataUrl } from "./images";
+import {
+	ImageAsset,
+	guessMimeFromPath,
+	imageAssetToDataUrl,
+	imageAssetFromBlob,
+} from "./images";
 
 function sanitize(text: string) {
 	// escape 2+ byte unicode characters
@@ -114,7 +119,8 @@ async function getMessages(
 ) {
 	let messages: Array<{ role: string; content: OpenAIContent }> = [];
 
-	let contents = [];
+	let documents = [];
+	let documentImages: string[] = [];
 
 	const resolveSelectedSwipe = (entry: ChatEntry) => {
 		const { index, swipes } = entry;
@@ -131,12 +137,40 @@ async function getMessages(
 		return entry.new;
 	};
 
-	for (const [index, document] of history.documents.entries()) {
+	for (const [, document] of history.documents.entries()) {
 		if (document.mute) {
 			continue;
 		}
-		const content = await history.app?.vault.read(document.file);
-		contents.push(
+		let content = "";
+		try {
+			const adapter = history.app?.vault.adapter;
+			const binary = new Uint8Array(
+				await adapter!.readBinary(document.file.path)
+			);
+			const mime = guessMimeFromPath(
+				document.file.path,
+				"application/octet-stream"
+			);
+			if (mime.startsWith("image/")) {
+				content = `IMAGE ${documentImages.length} (${mime})`;
+				const image = await imageAssetFromBlob(
+					new Blob([binary], { type: mime })
+				);
+				documentImages.push(await imageAssetToDataUrl(image));
+			} else {
+				try {
+					content = new TextDecoder("utf-8", {
+						fatal: true,
+					}).decode(binary);
+				} catch {
+					content = "UNKNOWN BINARY FORMAT";
+				}
+			}
+		} catch (err) {
+			console.error("Failed to read document content", err);
+			content = "ERROR READING DOCUMENT";
+		}
+		documents.push(
 			`BEGIN DOCUMENT (${document.file.path})\n${content}\nEND DOCUMENT`
 		);
 	}
@@ -182,39 +216,35 @@ async function getMessages(
 		});
 	}
 
-	const text =
-		typeof messages[0]!.content === "string"
-			? messages[0]!.content
-			: messages[0]!.content[0]?.type === "text"
-			? messages[0]!.content[0].text
-			: "";
-	if (contents.length > 0) {
-		const prefix = `${contents.join("\n")}\nBEGIN CHAT\n`;
-		if (typeof messages[0].content === "string") {
-			messages[0].content = `${prefix}${text}`;
-		} else if (Array.isArray(messages[0].content)) {
-			if (messages[0].content.length == 0) {
-				messages[0].content.push({ type: "text", text: "" });
-			}
-			const first = messages[0].content[0];
-			if (first.type === "text") {
-				first.text = `${prefix}${text}`;
-			}
-		}
-	} else {
-		const prefix =
-			"BEGIN DOCUMENTS\nNO SHARED DOCUMENTS\nEND DOCUMENTS\nBEGIN CHAT\n";
-		if (typeof messages[0].content === "string") {
-			messages[0].content = `${prefix}${text}`;
-		} else if (Array.isArray(messages[0].content)) {
-			if (messages[0].content.length == 0) {
-				messages[0].content.push({ type: "text", text: "" });
-			}
-			const first = messages[0].content[0];
-			if (first.type === "text") {
-				first.text = `${prefix}${text}`;
-			}
-		}
+	if (typeof messages[0].content === "string") {
+		messages[0].content = [
+			{
+				type: "text",
+				text: messages[0].content,
+			},
+		];
+	}
+
+	let prefix =
+		"BEGIN DOCUMENTS\nNO SHARED DOCUMENTS\nEND DOCUMENTS\nBEGIN CHAT\n";
+	if (documents.length > 0) {
+		prefix = `${documents.join("\n")}\nBEGIN CHAT\n`;
+	}
+	const firstContent = messages[0].content[0] as {
+		type: "text";
+		text: string;
+	};
+	firstContent.text = `${prefix}${firstContent.text}`;
+
+	if (documentImages.length > 0) {
+		messages[0].content.splice(
+			1,
+			0,
+			...documentImages.map((url) => ({
+				type: "image_url" as const,
+				image_url: { url },
+			}))
+		);
 	}
 
 	return messages;
