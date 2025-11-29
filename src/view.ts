@@ -709,6 +709,11 @@ export class ChatView extends ItemView {
 
 		const currentSwipe = working ? entry.new : entry.swipes[entry.index];
 
+		controls.setAttribute(
+			"data-asys-show",
+			entry.edit || reasoning ? "true" : "false"
+		);
+
 		if (invalid && !working) {
 			if (entry.started) {
 				setLoader(content);

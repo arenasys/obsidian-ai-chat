@@ -453,13 +453,21 @@
 	min-width: unset;
 }
 
-.asys__content[data-asys-reasoning="true"] {
+.asys__content-text[data-asys-reasoning="true"] {
 	color: var(--text-muted);
-	font-style: italic;
 }
 
 .asys__entry_inner[data-asys-reasoning="true"] {
 	max-height: 100px;
+}
+
+.asys__entry_inner[data-asys-reasoning="true"] .asys__content-text {
+	color: var(--text-faint);
+	font-style: italic;
+}
+
+.asys__controls[data-asys-show="true"] {
+	visibility: visible;
 }
 
 .asys__loader {
