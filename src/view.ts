@@ -8,8 +8,6 @@ import {
 	TFile,
 	getIcon,
 } from "obsidian";
-import * as fs from "node:fs";
-import * as path from "node:path";
 import {
 	ChatEntry,
 	ChatDocument,
@@ -17,210 +15,21 @@ import {
 	PLUGIN_ID,
 	ChatSettingProfiles,
 	ChatSwipe,
-	ImageAsset,
-	imageAssetFromDataUrl,
-	writeImageAssetToFile,
+	setIcon,
+	setLoader,
 } from "./common";
 import { API, getAPI } from "./api";
+import {
+	ImageList,
+	ImageListOptions,
+	ImageModal,
+	ImageAsset,
+	autoSaveImageAsset,
+	imageAssetFromDataUrl,
+	imageAssetFromFile,
+} from "./images";
 
 export const VIEW_TYPE_CHAT = "arenasys-ai-chat-view";
-
-function setIcon(el: Element, name: string) {
-	el.empty();
-	el.appendChild(getIcon(name) ?? getIcon("bug")!);
-}
-
-function setLoader(el: Element) {
-	var loader =
-		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" class="asys__loader"><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="40" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.4"></animate></circle><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="100" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="-.2"></animate></circle><circle fill="currentColor" stroke="currentColor" stroke-width="15" r="15" cx="160" cy="100"><animate attributeName="opacity" calcMode="spline" dur="2" values="1;0;1;" keySplines=".5 0 .5 1;.5 0 .5 1" repeatCount="indefinite" begin="0"></animate></circle></svg>';
-	el.empty();
-	el.insertAdjacentHTML("afterbegin", loader);
-}
-
-class ImageModal extends Modal {
-	private mainImageEl: HTMLImageElement | null = null;
-	private thumbsEl: HTMLElement | null = null;
-	private currentIndex: number;
-
-	constructor(
-		app: App,
-		private images: ImageAsset[],
-		selectedIndex: number,
-		private alt?: string
-	) {
-		super(app);
-		this.currentIndex =
-			this.images.length == 0
-				? 0
-				: Math.min(Math.max(selectedIndex, 0), this.images.length - 1);
-	}
-
-	private centerSelectedThumb(instant: boolean = false) {
-		if (!this.thumbsEl) return;
-		const selected = this.thumbsEl.children[
-			this.currentIndex
-		] as HTMLElement | null;
-		if (!selected) return;
-
-		const container = this.thumbsEl;
-		const scrollTo = () => {
-			const offset =
-				selected.offsetLeft +
-				selected.offsetWidth / 2 -
-				container.clientWidth / 2;
-			const maxScroll = Math.max(
-				0,
-				container.scrollWidth - container.clientWidth
-			);
-			const target = Math.max(0, Math.min(maxScroll, offset));
-			container.scrollTo({
-				left: target,
-				behavior: instant ? "auto" : "smooth",
-			});
-		};
-
-		if (instant) {
-			scrollTo();
-		} else {
-			requestAnimationFrame(scrollTo);
-		}
-	}
-
-	private setCurrentImage(index: number) {
-		if (index < 0 || index >= this.images.length) return;
-		this.currentIndex = index;
-		const asset = this.images[this.currentIndex];
-		if (this.mainImageEl) {
-			this.mainImageEl.src = asset.url;
-			this.mainImageEl.alt = this.alt ?? "";
-		}
-		if (this.thumbsEl) {
-			Array.from(this.thumbsEl.children).forEach((child, i) => {
-				(child as HTMLElement).toggleClass(
-					"asys__image-selected",
-					i === this.currentIndex
-				);
-			});
-		}
-		this.centerSelectedThumb();
-	}
-
-	onOpen() {
-		const { contentEl } = this;
-		this.containerEl.addClass("asys__image-modal-container");
-		contentEl.empty();
-
-		if (this.images.length == 0) {
-			this.close();
-			return;
-		}
-
-		const containerEl = contentEl.createDiv({ cls: "asys__image-modal" });
-		if (this.images.length === 1) {
-			containerEl.addClass("asys__image-single");
-		}
-		const mainEl = containerEl.createDiv({ cls: "asys__image-modal-main" });
-		const asset = this.images[this.currentIndex];
-		this.mainImageEl = mainEl.createEl("img", {
-			attr: { src: asset.url, alt: this.alt ?? "" },
-		});
-
-		if (this.images.length > 1) {
-			this.thumbsEl = containerEl.createDiv({
-				cls: "asys__images asys__image-modal-images",
-			});
-			this.images.forEach((image, index) => {
-				const wrapper = this.thumbsEl!.createDiv({
-					cls: "asys__image-wrapper",
-				});
-				if (index === this.currentIndex) {
-					wrapper.addClass("asys__image-selected");
-				}
-				const thumb = wrapper.createEl("img", {
-					attr: { src: image.url, alt: "" },
-				});
-				const download = wrapper.createEl("button", {
-					cls: "asys__image-download asys__image-action asys__icon clickable-icon",
-				});
-				setIcon(download, "download");
-				download.ariaLabel = "Download image";
-				download.addEventListener("click", (event) => {
-					event.preventDefault();
-					event.stopPropagation();
-					downloadImageAsset(image);
-				});
-				thumb.addEventListener("click", (event) => {
-					event.preventDefault();
-					event.stopPropagation();
-					this.setCurrentImage(index);
-				});
-			});
-			this.centerSelectedThumb(true);
-		}
-	}
-
-	onClose() {
-		this.contentEl.empty();
-		this.contentEl.removeClass("asys__image-modal");
-		this.containerEl.removeClass("asys__image-modal-container");
-	}
-}
-
-async function saveImageToFolder(
-	image: ImageAsset,
-	folder: string,
-	filename: string
-) {
-	try {
-		const targetDir = path.isAbsolute(folder)
-			? folder
-			: path.resolve(folder);
-		await fs.promises.mkdir(targetDir, { recursive: true });
-
-		const targetPath = path.join(targetDir, filename);
-		await writeImageAssetToFile(image, targetPath);
-		return true;
-	} catch (err) {
-		console.error("Failed to save image", err);
-		return false;
-	}
-}
-
-function deriveImageExtension(image: ImageAsset, fallback: string = "png") {
-	const map: Record<string, string> = {
-		"image/png": "png",
-		"image/jpeg": "jpg",
-		"image/webp": "webp",
-		"image/gif": "gif",
-		"image/bmp": "bmp",
-		"image/avif": "avif",
-		"image/svg+xml": "svg",
-	};
-	return map[image.mime] ?? fallback;
-}
-
-function downloadImageAsset(image: ImageAsset) {
-	const link = document.createElement("a");
-	const timestamp = (window as any).moment().format("YYYYMMDD_HHmmss");
-	const ext = deriveImageExtension(image);
-	const filename = `obsidian_${timestamp}.${ext}`;
-	link.href = image.url;
-	link.download = filename;
-	document.body.appendChild(link);
-	link.click();
-	link.remove();
-}
-
-async function createImageAsset(source: string): Promise<ImageAsset> {
-	if (source.startsWith("data:")) {
-		return imageAssetFromDataUrl(source);
-	}
-	const res = await fetch(source);
-	const blob = await res.blob();
-	const mime = blob.type || "application/octet-stream";
-	const url = URL.createObjectURL(blob);
-	return { blob, mime, url };
-}
 export class ChatView extends ItemView {
 	profiles: ChatSettingProfiles;
 	entryContainer: Element;
@@ -229,6 +38,7 @@ export class ChatView extends ItemView {
 	inputImagesContainer: HTMLElement;
 	popupContainer: Element;
 	inputImages: ImageAsset[];
+	imageLists: WeakMap<HTMLElement, ImageList> = new WeakMap();
 	history: ChatHistory;
 	working: boolean;
 
@@ -247,18 +57,14 @@ export class ChatView extends ItemView {
 		this.profiles = profiles;
 	}
 
-	private openImageModal(
-		image: ImageAsset,
-		alt?: string,
-		galleryImages?: ImageAsset[]
-	) {
+	private openImageModal(image: ImageAsset, galleryImages?: ImageAsset[]) {
 		const images = galleryImages ?? this.getVisibleImages();
 		let selectedIndex = images.findIndex((img) => img.url === image.url);
 		if (selectedIndex === -1) {
 			images.push(image);
 			selectedIndex = images.length - 1;
 		}
-		new ImageModal(this.app, images, selectedIndex, alt).open();
+		new ImageModal(this.app, images, selectedIndex).open();
 	}
 
 	private getVisibleImages(): ImageAsset[] {
@@ -273,18 +79,6 @@ export class ChatView extends ItemView {
 			images.push(...swipe.images.filter(Boolean));
 		}
 		return images;
-	}
-
-	async autoSaveImage(image: ImageAsset) {
-		const folder = this.getSettings().imageSaveFolder?.trim() ?? "";
-		if (folder.length == 0) {
-			return;
-		}
-		const timestamp = (window as any).moment().format("YYYYMMDD_HHmmss");
-		const ext = deriveImageExtension(image);
-		const suffix = Math.random().toString(36).slice(2, 6);
-		const filename = `obsidian_${timestamp}_${suffix}.${ext}`;
-		await saveImageToFolder(image, folder, filename);
 	}
 
 	getSettings() {
@@ -338,70 +132,32 @@ export class ChatView extends ItemView {
 		}
 	}
 
-	renderImages(
+	private ensureImageList(
 		container: HTMLElement,
-		images: ImageAsset[],
-		onRemove?: (index: number) => void,
-		galleryImages?: ImageAsset[]
-	) {
-		container.empty();
-		if (images.length == 0) {
-			container.addClass("asys__hidden");
-			container.style.display = "none";
-			return;
+		options: ImageListOptions
+	): ImageList {
+		let list = this.imageLists.get(container);
+		if (!list) {
+			list = new ImageList(container, options);
+			this.imageLists.set(container, list);
+		} else {
+			list.updateOptions(options);
 		}
-		container.removeClass("asys__hidden");
-		container.style.display = "";
-
-		for (const [index, image] of images.entries()) {
-			const wrapper = container.createDiv({
-				cls: "asys__image-wrapper",
-			});
-			const img = wrapper.createEl("img");
-			img.src = image.url;
-			img.addEventListener("click", () =>
-				this.openImageModal(image, img.alt, galleryImages ?? undefined)
-			);
-
-			const download = wrapper.createEl("button", {
-				cls: "asys__image-download asys__image-action asys__icon clickable-icon",
-			});
-			setIcon(download, "download");
-			download.ariaLabel = "Download image";
-			download.addEventListener("click", (event) => {
-				event.preventDefault();
-				event.stopPropagation();
-				downloadImageAsset(image);
-			});
-
-			if (onRemove) {
-				const remove = wrapper.createEl("button", {
-					cls: "asys__image-remove asys__image-action asys__icon clickable-icon",
-				});
-				setIcon(remove, "x");
-				remove.ariaLabel = "Remove image";
-				remove.addEventListener("click", (event) => {
-					event.preventDefault();
-					event.stopPropagation();
-					onRemove(index);
-				});
-			}
-		}
+		return list;
 	}
 
 	syncInputImages() {
 		if (!this.inputImagesContainer) {
 			return;
 		}
-		this.renderImages(
-			this.inputImagesContainer,
-			this.inputImages ?? [],
-			(index) => {
+		const list = this.ensureImageList(this.inputImagesContainer, {
+			onClick: (image) => this.openImageModal(image, this.inputImages),
+			onRemove: (index) => {
 				this.inputImages.splice(index, 1);
 				this.syncInputImages();
 			},
-			this.inputImages
-		);
+		});
+		list.setImages(this.inputImages ?? []);
 	}
 
 	addPlainPaste(element: HTMLElement, onImage?: (image: ImageAsset) => void) {
@@ -423,20 +179,13 @@ export class ChatView extends ItemView {
 			}
 
 			for (const file of files) {
-				const reader = new FileReader();
-				reader.onload = async () => {
-					if (typeof reader.result === "string") {
-						try {
-							const asset = await imageAssetFromDataUrl(
-								reader.result
-							);
-							onImage?.(asset);
-						} catch (err) {
-							console.error("Failed to parse pasted image", err);
-						}
-					}
-				};
-				reader.readAsDataURL(file);
+				imageAssetFromFile(file)
+					.then((asset) => {
+						onImage?.(asset);
+					})
+					.catch((err) => {
+						console.error("Failed to parse pasted image", err);
+					});
 			}
 		});
 	}
@@ -800,18 +549,18 @@ export class ChatView extends ItemView {
 			(img) => !!img
 		);
 		const allowRemove = entry.edit;
-		this.renderImages(
-			images,
-			imagesToRender,
-			allowRemove
+		const list = this.ensureImageList(images, {
+			onClick: (image) => this.openImageModal(image),
+			onRemove: allowRemove
 				? (index) => {
 						const swipe = entry.swipes[entry.index];
 						if (!swipe?.images) return;
 						swipe.images.splice(index, 1);
 						this.syncEntryToDom(entry);
 				  }
-				: undefined
-		);
+				: undefined,
+		});
+		list.setImages(imagesToRender);
 	}
 
 	syncEntryFromDom(entry: ChatEntry) {
@@ -1065,8 +814,12 @@ export class ChatView extends ItemView {
 				return;
 			}
 			try {
-				const asset = await createImageAsset(image);
-				this.autoSaveImage(asset);
+				const asset = await imageAssetFromDataUrl(image);
+				const autoSaveFolder =
+					this.getSettings().imageSaveFolder?.trim();
+				if (autoSaveFolder && autoSaveFolder.length > 0) {
+					autoSaveImageAsset(asset, autoSaveFolder);
+				}
 				if (entry.new == null) {
 					entry.new = { content: "", images: [], thoughts: null };
 				}

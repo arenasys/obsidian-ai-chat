@@ -1,16 +1,10 @@
-import {
-	ChatEntry,
-	ChatHistory,
-	ChatSettings,
-	HTTPStatus,
-	ImageAsset,
-	imageAssetToDataUrl,
-} from "./common";
+import { ChatEntry, ChatHistory, ChatSettings, HTTPStatus } from "./common";
 import { createParser, EventSourceParser } from "eventsource-parser";
 import { EventEmitter } from "node:events";
 import { ClientRequest, IncomingMessage } from "node:http";
 import { request } from "node:https";
 import { request as request_http } from "node:http";
+import { ImageAsset, imageAssetToDataUrl } from "./images";
 
 function sanitize(text: string) {
 	// escape 2+ byte unicode characters
