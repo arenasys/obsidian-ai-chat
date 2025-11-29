@@ -417,7 +417,6 @@ export class API {
 					response.socket.setTimeout(0);
 					response.setEncoding("utf8");
 					response.on("data", async (chunk: string) => {
-						console.log("DATA", chunk);
 						await this.handleChunk(chunk, parser);
 					});
 					response.on("end", () => {

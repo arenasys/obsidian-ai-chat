@@ -156,6 +156,9 @@ export class ChatView extends ItemView {
 				this.inputImages.splice(index, 1);
 				this.syncInputImages();
 			},
+			onReorder: (images: ImageAsset[]) => {
+				this.inputImages = images;
+			},
 		});
 		list.setImages(this.inputImages ?? []);
 	}
@@ -548,15 +551,19 @@ export class ChatView extends ItemView {
 		const imagesToRender = (currentSwipe?.images ?? []).filter(
 			(img) => !!img
 		);
-		const allowRemove = entry.edit;
 		const list = this.ensureImageList(images, {
 			onClick: (image) => this.openImageModal(image),
-			onRemove: allowRemove
+			onRemove: entry.edit
 				? (index) => {
 						const swipe = entry.swipes[entry.index];
 						if (!swipe?.images) return;
 						swipe.images.splice(index, 1);
 						this.syncEntryToDom(entry);
+				  }
+				: undefined,
+			onReorder: entry.edit
+				? (images: ImageAsset[]) => {
+						entry.swipes[entry.index].images = images;
 				  }
 				: undefined,
 		});

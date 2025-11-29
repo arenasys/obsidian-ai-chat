@@ -3,6 +3,8 @@ import * as path from "node:path";
 import { App, Modal } from "obsidian";
 import { setIcon } from "./common";
 
+const IMAGE_DRAG_TYPE = "application/x-asys-image-drag";
+
 export function deriveImageExtension(
 	image: ImageAsset,
 	fallback: string = "png"
@@ -62,6 +64,7 @@ export async function autoSaveImageAsset(image: ImageAsset, folder: string) {
 export type ImageListOptions = {
 	onClick?: (image: ImageAsset, index: number) => void;
 	onRemove?: (index: number) => void;
+	onReorder?: (images: ImageAsset[]) => void;
 	showSelection?: boolean;
 	selectedIndex?: number;
 	showDownload?: boolean;
@@ -69,11 +72,39 @@ export type ImageListOptions = {
 
 export class ImageList {
 	private images: ImageAsset[] = [];
+	private dragIndex: number | null = null;
+	private dragPreviewEl: HTMLElement | null = null;
 
 	constructor(
 		private container: HTMLElement,
 		private options: ImageListOptions = {}
-	) {}
+	) {
+		this.container.addEventListener("dragover", (event: DragEvent) => {
+			if (!this.isOurDrag(event)) return;
+			if (this.dragIndex === null) return;
+			const index = this.getDropTargetFromPosition(event.clientX);
+			if (index === null) return;
+			event.preventDefault();
+			this.updateDropIndicator(index);
+		});
+
+		this.container.addEventListener("dragexit", (event: DragEvent) => {
+			if (!this.isOurDrag(event)) return;
+			if (this.dragIndex === null) return;
+			this.clearDropIndicators();
+		});
+
+		this.container.addEventListener("drop", (event: DragEvent) => {
+			if (!this.isOurDrag(event)) return;
+			if (this.dragIndex === null) return;
+			event.preventDefault();
+			const index = this.getDropTargetFromPosition(event.clientX);
+			if (index !== null) {
+				this.moveImage(this.dragIndex, index);
+			}
+			this.resetDragState();
+		});
+	}
 
 	updateOptions(options: ImageListOptions) {
 		this.options = { ...this.options, ...options };
@@ -143,6 +174,78 @@ export class ImageList {
 		}
 	}
 
+	private clearDropIndicators() {
+		Array.from(this.container.children).forEach((child) => {
+			child.removeClass("asys__image-drop-before");
+			child.removeClass("asys__image-drop-after");
+		});
+	}
+
+	private resetDragState() {
+		this.dragIndex = null;
+		this.dragPreviewEl?.remove();
+		this.dragPreviewEl = null;
+		Array.from(this.container.children).forEach((child) => {
+			child.removeClass("asys__image-placeholder");
+			child.removeClass("asys__image-drop-before");
+			child.removeClass("asys__image-drop-after");
+		});
+	}
+
+	private updateDropIndicator(index: number) {
+		this.clearDropIndicators();
+		let dropAfter = false;
+		if (index == this.container.children.length) {
+			dropAfter = true;
+			index = index - 1;
+		}
+		let wrapper = this.container.children[index] as HTMLElement;
+		wrapper.addClass(
+			dropAfter ? "asys__image-drop-after" : "asys__image-drop-before"
+		);
+	}
+
+	private getDropTargetFromPosition(clientX: number) {
+		const wrappers = Array.from(this.container.children) as HTMLElement[];
+		if (wrappers.length === 0) return null;
+
+		let index = null;
+		for (let i = 0; i < wrappers.length; i++) {
+			const rect = wrappers[i].getBoundingClientRect();
+			const midpoint = rect.left + rect.width / 2;
+			if (clientX < midpoint) {
+				index = i;
+				break;
+			}
+			if (i === wrappers.length - 1) {
+				index = i + 1;
+			}
+		}
+
+		return index;
+	}
+
+	private moveImage(from: number, to: number) {
+		if (
+			from < 0 ||
+			from >= this.images.length ||
+			to < 0 ||
+			to > this.images.length
+		) {
+			return;
+		}
+
+		const [image] = this.images.splice(from, 1);
+		let target = to;
+		if (from < to) {
+			target -= 1;
+		}
+		this.images.splice(target, 0, image);
+
+		this.options.onReorder?.(this.images);
+		this.render();
+	}
+
 	private render() {
 		this.container.empty();
 		if (this.images.length === 0) {
@@ -173,7 +276,7 @@ export class ImageList {
 					src: image.url,
 				},
 			});
-			img.addEventListener("click", () => {
+			wrapper.addEventListener("click", () => {
 				this.options.onClick?.(image, index);
 				if (this.options.showSelection) {
 					this.setSelectedIndex(index);
@@ -205,7 +308,42 @@ export class ImageList {
 					this.options.onRemove?.(index);
 				});
 			}
+
+			if (this.options.onReorder) {
+				wrapper.setAttribute("draggable", "true");
+				wrapper.addEventListener("dragstart", (event) => {
+					this.dragIndex = index;
+					event.dataTransfer?.setData(IMAGE_DRAG_TYPE, "true");
+					if (event.dataTransfer) {
+						event.dataTransfer.effectAllowed = "move";
+					}
+					const rect = img.getBoundingClientRect();
+					const width = rect.width;
+					const height = rect.height;
+					const preview = img.cloneNode(true) as HTMLElement;
+					preview.addClass("asys__image-drag-preview");
+					preview.style.width = `${width}px`;
+					preview.style.height = `${height}px`;
+					document.body.appendChild(preview);
+					this.dragPreviewEl = preview;
+					event.dataTransfer?.setDragImage(
+						preview,
+						width / 2,
+						height / 2
+					);
+					wrapper.addClass("asys__image-placeholder");
+				});
+
+				wrapper.addEventListener("dragend", (_event) => {
+					this.resetDragState();
+				});
+			}
 		});
+	}
+
+	private isOurDrag(event: DragEvent) {
+		const types = event.dataTransfer?.types;
+		return !!types && Array.from(types).includes(IMAGE_DRAG_TYPE);
 	}
 }
 
@@ -213,6 +351,19 @@ export class ImageModal extends Modal {
 	private mainImageEl: HTMLImageElement | null = null;
 	private thumbs: ImageList | null = null;
 	private currentIndex: number;
+	private keydownHandler = (event: KeyboardEvent) => {
+		if (this.images.length <= 1) return;
+		if (event.key === "ArrowLeft") {
+			event.preventDefault();
+			this.setCurrentImage(
+				(this.currentIndex + this.images.length - 1) %
+					this.images.length
+			);
+		} else if (event.key === "ArrowRight") {
+			event.preventDefault();
+			this.setCurrentImage((this.currentIndex + 1) % this.images.length);
+		}
+	};
 
 	constructor(app: App, private images: ImageAsset[], selectedIndex: number) {
 		super(app);
@@ -272,9 +423,12 @@ export class ImageModal extends Modal {
 		} else {
 			this.thumbs = null;
 		}
+
+		window.addEventListener("keydown", this.keydownHandler);
 	}
 
 	onClose() {
+		window.removeEventListener("keydown", this.keydownHandler);
 		this.contentEl.empty();
 		this.contentEl.removeClass("asys__image-modal");
 		this.containerEl.removeClass("asys__image-modal-container");
