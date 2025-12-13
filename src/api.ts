@@ -1,4 +1,11 @@
-import { ChatEntry, ChatHistory, ChatSettings, HTTPStatus } from "./common";
+import {
+	ChatEntry,
+	ChatHistory,
+	ChatSettings,
+	HTTPStatus,
+	ModelCapabilities,
+	ModelInfo,
+} from "./common";
 import { createParser, EventSourceParser } from "eventsource-parser";
 import { EventEmitter } from "node:events";
 import { ClientRequest, IncomingMessage } from "node:http";
@@ -7,8 +14,8 @@ import { request as request_http } from "node:http";
 import {
 	ImageAsset,
 	guessMimeFromPath,
-	imageAssetToDataUrl,
 	imageAssetFromBlob,
+	imageAssetToDataUrl,
 } from "./images";
 
 function sanitize(text: string) {
@@ -19,78 +26,7 @@ function sanitize(text: string) {
 					.join("")).join("");
 }
 
-const ERROR_SUFFIX = "Press to dismiss.";
-
-const ANTHROPIC_ENDPOINT: string = "https://api.anthropic.com";
-const ANTHROPIC_PATH: string = "/v1/messages";
-
-const OPENAI_ENDPOINT: string = "https://api.openai.com";
-const OPENAI_PATH: string = "/v1/chat/completions";
-
-const OPENROUTER_ENDPOINT: string = "https://openrouter.ai/api";
-const TOGETHER_ENDPOINT: string = "https://api.together.xyz";
-
-const COHERE_ENDPOINT: string = "https://api.cohere.ai";
-const COHERE_PATH: string = "/v1/chat";
-
-const DEEPSEEK_ENDPOINT: string = "https://api.deepseek.com";
-const DEEPSEEK_PATH: string = "/chat/completions";
-
-const ANTHROPIC_MODELS: Record<string, string> = {
-	"claude-3-opus": "claude-3-opus-20240229",
-	"claude-3-sonnet": "claude-3-sonnet-20240229",
-	"claude-3-haiku": "claude-3-haiku-20240307",
-};
-
-const ANTHROPIC_SETTINGS: Record<string, string> = {
-	temperature: "temperature",
-	topK: "top_k",
-	topP: "top_p",
-};
-
-const OPENAI_MODELS: Record<string, string> = {
-	"gpt-4": "gpt-4",
-	"gpt-4-turbo": "gpt-4-turbo-preview",
-	"gpt-4-32k": "gpt-4-32k",
-	"gpt-3.5-turbo": "gpt-3.5-turbo",
-	"gpt-3.5-turbo-16k": "gpt-3.5-turbo-16k",
-};
-
-const OPENAI_SETTINGS: Record<string, string> = {
-	temperature: "temperature",
-	topK: "top_k",
-	topP: "top_p",
-	maxTokens: "max_tokens",
-	frequencyPenalty: "frequency_penalty",
-	reasoning: "reasoning",
-};
-
-const COHERE_MODELS: Record<string, string> = {
-	"command-r": "command-r",
-	"command-r-plus": "command-r-plus",
-};
-
-const COHERE_SETTINGS: Record<string, string> = {
-	temperature: "temperature",
-	topK: "k",
-	topP: "p",
-	maxTokens: "max_tokens",
-	frequencyPenalty: "frequency_penalty",
-};
-
-const DEEPSEEK_MODELS: Record<string, string> = {
-	"deepseek-r1": "deepseek-reasoner",
-	"deepseek-v3": "deepseek-chat",
-};
-
-const DEEPSEEK_SETTINGS: Record<string, string> = {
-	temperature: "temperature",
-	topP: "top_p",
-	maxTokens: "max_tokens",
-	frequencyPenalty: "frequency_penalty",
-};
-
-function formatSentance(text: string) {
+function formatSentence(text: string) {
 	text = text.charAt(0).toUpperCase() + text.slice(1);
 	if (text.charAt(text.length - 1) != ".") {
 		text += ".";
@@ -105,327 +41,364 @@ function joinEndpoint(base: string, path: string) {
 	return base + path;
 }
 
-type OpenAIContent =
+const CHAT_PATH = "/v1/chat/completions";
+const MODELS_PATH = "/v1/models";
+const ERROR_SUFFIX = "Press to dismiss.";
+
+type APIContent =
 	| string
 	| Array<
 			| { type: "text"; text: string }
 			| { type: "image_url"; image_url: { url: string } }
 	  >;
 
-async function getMessages(
-	history: ChatHistory,
-	target: ChatEntry,
-	options: { includeImages?: boolean } = {}
-) {
-	let messages: Array<{ role: string; content: OpenAIContent }> = [];
-
-	let documents = [];
-	let documentImages: string[] = [];
-
-	const resolveSelectedSwipe = (entry: ChatEntry) => {
-		const { index, swipes } = entry;
-		if (Number.isInteger(index) && index >= 0 && index < swipes.length) {
-			return swipes[index];
-		}
-		if (Number.isInteger(index) && index === swipes.length && entry.new) {
-			return entry.new;
-		}
-		if (swipes.length > 0) {
-			entry.index = swipes.length - 1;
-			return swipes[entry.index];
-		}
-		return entry.new;
-	};
-
-	for (const [, document] of history.documents.entries()) {
-		if (document.mute) {
-			continue;
-		}
-		let content = "";
-		try {
-			const adapter = history.app?.vault.adapter;
-			const binary = new Uint8Array(
-				await adapter!.readBinary(document.file.path)
-			);
-			const mime = guessMimeFromPath(
-				document.file.path,
-				"application/octet-stream"
-			);
-			if (mime.startsWith("image/")) {
-				content = `IMAGE ${documentImages.length} (${mime})`;
-				const image = await imageAssetFromBlob(
-					new Blob([binary], { type: mime })
-				);
-				documentImages.push(await imageAssetToDataUrl(image));
-			} else {
-				try {
-					content = new TextDecoder("utf-8", {
-						fatal: true,
-					}).decode(binary);
-				} catch {
-					content = "UNKNOWN BINARY FORMAT";
-				}
-			}
-		} catch (err) {
-			console.error("Failed to read document content", err);
-			content = "ERROR READING DOCUMENT";
-		}
-		documents.push(
-			`BEGIN DOCUMENT (${document.file.path})\n${content}\nEND DOCUMENT`
-		);
+function parseCapabilities(value: any): ModelCapabilities {
+	if (!value || typeof value !== "object") {
+		return { reasoning: false, images: false };
 	}
 
-	for (const [, entry] of history.entries.entries()) {
-		if (target == entry) {
-			break;
-		}
-		const swipe = resolveSelectedSwipe(entry);
-		if (!swipe) {
-			continue;
-		}
-		const text = swipe.content;
-		const images = swipe.images ?? [];
+	const reasoningFlag = value?.supported_parameters?.includes("reasoning");
+	const imagesFlag = value?.architecture?.input_modalities?.includes("image");
 
-		let content: OpenAIContent = text;
-		if (options.includeImages) {
-			const imageUrls = await Promise.all(
-				images.map((img: ImageAsset) => imageAssetToDataUrl(img))
+	return {
+		reasoning: reasoningFlag,
+		images: imagesFlag,
+	};
+}
+
+export class OpenAICompatibleAPI {
+	events: EventEmitter;
+	request: ClientRequest | null = null;
+	endpoint: string;
+	model: ModelInfo;
+	settings: Record<string, any>;
+	closed: boolean = false;
+
+	constructor(
+		endpoint: string,
+		model: ModelInfo,
+		settings: Record<string, any> = {}
+	) {
+		this.endpoint = endpoint;
+		this.model = model;
+		this.settings = settings;
+		this.events = new EventEmitter();
+	}
+
+	private getChatEndpoint() {
+		return joinEndpoint(this.endpoint, CHAT_PATH);
+	}
+
+	private getModelsEndpoint() {
+		return joinEndpoint(this.endpoint, MODELS_PATH);
+	}
+
+	private getBaseHeaders() {
+		const headers: Record<string, string> = {
+			accept: "application/json",
+		};
+		const apiKey = this.settings.apiKey;
+		headers.authorization = `Bearer ${apiKey}`;
+		return headers;
+	}
+
+	private getHeaders(body: string) {
+		const headers = this.getBaseHeaders();
+		headers["content-type"] = "application/json";
+		headers["content-length"] = Buffer.byteLength(body, "utf8").toString();
+		return headers;
+	}
+
+	private adjustContent(content: Record<string, any>): Record<string, any> {
+		// OpenAI uses "reasoning_effort" for chat completions API
+		// Assume custom endpoints are OAI-compatible unless using OpenRouter
+		if (this.settings.apiEndpoint != "https://openrouter.ai/api") {
+			if (content.reasoning && content.reasoning.effort) {
+				content.reasoning_effort = content.reasoning.effort;
+				delete content.reasoning;
+			}
+		}
+		return content;
+	}
+
+	private async getBody(history: ChatHistory, target: ChatEntry) {
+		const messages = await this.getMessages(history, target);
+		const parameters = this.settings.parameters ?? {};
+		const { systemPrompt, ...requestSettings } = parameters;
+
+		if (
+			typeof systemPrompt === "string" &&
+			systemPrompt.trim().length > 0
+		) {
+			messages.unshift({
+				role: "system",
+				content: systemPrompt,
+			});
+		}
+
+		const content: Record<string, any> = this.adjustContent({
+			stream: true,
+			...requestSettings,
+			model: this.model.id,
+			messages: messages,
+		});
+
+		console.log("Content: ", content);
+
+		const body = sanitize(JSON.stringify(content));
+
+		return body;
+	}
+
+	private async getMessages(
+		history: ChatHistory,
+		target: ChatEntry
+	): Promise<Array<{ role: string; content: APIContent }>> {
+		const includeImages = this.model.capabilities.images;
+		let messages: Array<{ role: string; content: APIContent }> = [];
+
+		let documents = [];
+		let documentImages: string[] = [];
+		let omittedImagesCount = 0;
+
+		const resolveSelectedSwipe = (entry: ChatEntry) => {
+			const { index, swipes } = entry;
+			if (
+				Number.isInteger(index) &&
+				index >= 0 &&
+				index < swipes.length
+			) {
+				return swipes[index];
+			}
+			if (
+				Number.isInteger(index) &&
+				index === swipes.length &&
+				entry.new
+			) {
+				return entry.new;
+			}
+			if (swipes.length > 0) {
+				entry.index = swipes.length - 1;
+				return swipes[entry.index];
+			}
+			return entry.new;
+		};
+
+		for (const [, document] of history.documents.entries()) {
+			if (document.mute) {
+				continue;
+			}
+			let content = "";
+			try {
+				const adapter = history.app?.vault.adapter;
+				const binary = new Uint8Array(
+					await adapter!.readBinary(document.file.path)
+				);
+				const mime = guessMimeFromPath(
+					document.file.path,
+					"application/octet-stream"
+				);
+
+				if (mime.startsWith("image/")) {
+					if (includeImages) {
+						content = `IMAGE ${documentImages.length} (${mime})`;
+						const image = await imageAssetFromBlob(
+							new Blob([binary], { type: mime })
+						);
+						documentImages.push(await imageAssetToDataUrl(image));
+					} else {
+						content = `OMITTED`;
+						omittedImagesCount++;
+					}
+				} else {
+					try {
+						content = new TextDecoder("utf-8", {
+							fatal: true,
+						}).decode(binary);
+					} catch {
+						content = "UNKNOWN BINARY FORMAT";
+					}
+				}
+			} catch (err) {
+				console.error("Failed to read document content", err);
+				content = "ERROR READING DOCUMENT";
+			}
+			documents.push(
+				`BEGIN DOCUMENT (${document.file.path})\n${content}\nEND DOCUMENT`
 			);
-			content = [
+		}
+
+		for (const [, entry] of history.entries.entries()) {
+			if (target == entry) {
+				break;
+			}
+			const swipe = resolveSelectedSwipe(entry);
+			if (!swipe) {
+				continue;
+			}
+			const text = swipe.content;
+			const images = swipe.images ?? [];
+
+			let content: APIContent = text;
+			if (includeImages) {
+				const imageUrls = await Promise.all(
+					images.map((img: ImageAsset) => imageAssetToDataUrl(img))
+				);
+				content = [
+					{
+						type: "text",
+						text: text,
+					},
+					...imageUrls.map((url) => ({
+						type: "image_url" as const,
+						image_url: { url },
+					})),
+				];
+			}
+
+			messages.push({
+				role: entry.user ? "user" : "assistant",
+				content: content,
+			});
+		}
+
+		if (messages.length == 0) {
+			messages.push({
+				role: "user",
+				content: "",
+			});
+		}
+
+		if (typeof messages[0].content === "string") {
+			messages[0].content = [
 				{
 					type: "text",
-					text: text,
+					text: messages[0].content,
 				},
-				...imageUrls.map((url) => ({
-					type: "image_url" as const,
-					image_url: { url },
-				})),
 			];
 		}
 
-		messages.push({
-			role: entry.user ? "user" : "assistant",
-			content: content,
-		});
+		let prefix = "BEGIN DOCUMENTS\n";
+		if (documents.length > 0) {
+			prefix += documents.join("\n") + "\n";
+		} else {
+			prefix += "NO SHARED DOCUMENTS\n";
+		}
+
+		if (documentImages.length > 0) {
+			if (includeImages) {
+				messages[0].content.splice(
+					1,
+					0,
+					...documentImages.map((url) => ({
+						type: "image_url" as const,
+						image_url: { url },
+					}))
+				);
+			} else {
+				omittedImagesCount += documentImages.length;
+			}
+		}
+
+		if (omittedImagesCount > 0) {
+			prefix += `WARNING: IMAGE DATA OMITTED (${omittedImagesCount} IMAGES). TELL THE USER TO CHECK THEIR SETTINGS.\n`;
+		}
+
+		prefix += "END DOCUMENTS\nBEGIN CHAT\n";
+
+		const firstContent = messages[0].content[0] as {
+			type: "text";
+			text: string;
+		};
+		firstContent.text = `${prefix}${firstContent.text}`;
+
+		return messages;
 	}
 
-	if (messages.length == 0) {
-		messages.push({
-			role: "user",
-			content: "",
-		});
-	}
+	private emitContentDelta(delta: any) {
+		const pushText = (text: string | undefined) => {
+			if (typeof text === "string" && text.length > 0) {
+				this.events.emit("text", text);
+			}
+		};
 
-	if (typeof messages[0].content === "string") {
-		messages[0].content = [
-			{
-				type: "text",
-				text: messages[0].content,
-			},
-		];
-	}
+		const pushImage = (imageUrl: string | undefined) => {
+			if (typeof imageUrl === "string" && imageUrl.length > 0) {
+				this.events.emit("image", imageUrl);
+			}
+		};
 
-	let prefix =
-		"BEGIN DOCUMENTS\nNO SHARED DOCUMENTS\nEND DOCUMENTS\nBEGIN CHAT\n";
-	if (documents.length > 0) {
-		prefix = `${documents.join("\n")}\nBEGIN CHAT\n`;
-	}
-	const firstContent = messages[0].content[0] as {
-		type: "text";
-		text: string;
-	};
-	firstContent.text = `${prefix}${firstContent.text}`;
+		const pushReasoning = (reasoning: string | undefined) => {
+			if (typeof reasoning === "string" && reasoning.length > 0) {
+				this.events.emit("reasoning", reasoning);
+			}
+		};
 
-	if (documentImages.length > 0) {
-		messages[0].content.splice(
-			1,
-			0,
-			...documentImages.map((url) => ({
-				type: "image_url" as const,
-				image_url: { url },
-			}))
-		);
-	}
+		const content = delta?.content;
+		if (typeof content === "string") {
+			pushText(content);
+		} else if (Array.isArray(content)) {
+			for (const part of content) {
+				if (part?.type === "text") {
+					pushText(part.text);
+				} else if (part?.type === "image_url") {
+					pushImage(part.image_url?.url);
+				}
+			}
+		}
 
-	return messages;
-}
+		const reasoning = delta?.reasoning;
+		if (typeof reasoning === "string") {
+			pushReasoning(reasoning);
+		} else if (Array.isArray(reasoning)) {
+			for (const part of reasoning) {
+				if (part?.type === "text") {
+					pushReasoning(part.text);
+				}
+			}
+		}
 
-function getModel(settings: ChatSettings, mapping: Record<string, string>) {
-	let model = settings.apiModel;
-	if (model == "custom") {
-		model = settings.apiModelCustom;
-	}
-	if (model in mapping) {
-		model = mapping[model];
-	}
-	return model;
-}
-
-function getContent(
-	content: Record<string, any>,
-	settings: ChatSettings,
-	mapping: Record<string, string>
-) {
-	for (const [key, value] of Object.entries(mapping)) {
-		if (key in settings && settings[key] != null) {
-			content[value] = settings[key];
+		const images = delta?.images;
+		if (Array.isArray(images)) {
+			for (const image of images) {
+				pushImage(image?.image_url?.url);
+			}
+		} else {
+			pushImage(delta?.image_url?.url);
 		}
 	}
 
-	if ("reasoning" in content) {
-		var reasoning = settings["reasoning"];
-		content["reasoning"] = {
-			effort: reasoning,
-		};
-	}
-
-	return content;
-}
-
-export function getAPI(settings: ChatSettings) {
-	switch (settings.apiProvider) {
-		case "openai":
-			return new OpenAIAPI(
-				OPENAI_ENDPOINT,
-				OPENAI_SETTINGS,
-				OPENAI_MODELS
-			) as API;
-		case "openrouter":
-			return new OpenAIAPI(
-				OPENROUTER_ENDPOINT,
-				OPENAI_SETTINGS,
-				{}
-			) as API;
-		case "togetherai":
-			return new OpenAIAPI(TOGETHER_ENDPOINT, OPENAI_SETTINGS, {}) as API;
-		case "openai-custom":
-			return new OpenAIAPI(
-				settings.apiEndpoint,
-				OPENAI_SETTINGS,
-				{}
-			) as API;
-		case "anthropic":
-			return new AnthropicAPI(
-				ANTHROPIC_ENDPOINT,
-				ANTHROPIC_SETTINGS,
-				ANTHROPIC_MODELS
-			) as API;
-		case "anthropic-custom":
-			return new AnthropicAPI(
-				settings.apiEndpoint,
-				ANTHROPIC_SETTINGS,
-				{}
-			) as API;
-		case "cohere":
-			return new CohereAPI(
-				COHERE_ENDPOINT,
-				COHERE_SETTINGS,
-				COHERE_MODELS
-			) as API;
-		case "deepseek":
-			return new DeepSeekAPI(
-				DEEPSEEK_ENDPOINT,
-				DEEPSEEK_SETTINGS,
-				DEEPSEEK_MODELS
-			) as API;
-	}
-	return null;
-}
-
-export class API {
-	events: EventEmitter;
-	request: ClientRequest;
-	endpoint: string;
-	settings: Record<string, string>;
-	models: Record<string, string>;
-	closed: boolean = false;
-	constructor(
-		endpoint: string,
-		settings: Record<string, string>,
-		models: Record<string, string>
-	) {
-		this.endpoint = endpoint;
-		this.events = new EventEmitter();
-		this.settings = settings;
-		this.models = models;
-	}
-	async getEndpoint() {
-		return this.endpoint;
-	}
-	async getBody(
-		history: ChatHistory,
-		target: ChatEntry,
-		settings: ChatSettings
-	) {
-		return "";
-	}
-	async getHeaders(settings: ChatSettings) {
-		return {} as Record<string, any>;
-	}
-
-	async handleChunk(chunk: string, parser: EventSourceParser) {
+	private async handleChunk(chunk: string, parser: EventSourceParser) {
 		try {
 			parser.feed(chunk);
 		} catch {}
 	}
 
-	async send(
-		history: ChatHistory,
-		target: ChatEntry,
-		settings: ChatSettings
-	) {
-		const url = await this.getEndpoint();
-		const body = await this.getBody(history, target, settings);
-		let headers = await this.getHeaders(settings);
-
-		//headers["charset"] = "UTF-8";
-		//headers["content-type"] = "application/json; charset=UTF-8";
-		headers["content-type"] = "application/json";
-		headers["content-length"] = body.length;
+	async send(history: ChatHistory, target: ChatEntry) {
+		const url = this.getChatEndpoint();
+		const body = await this.getBody(history, target);
+		let headers = this.getHeaders(body);
 
 		const parser = createParser((event) => {
 			if (event.type != "event") return;
+			if (event.data === "[DONE]") {
+				return;
+			}
 
-			const response = JSON.parse(event.data);
-			const type =
-				response.object ?? response.type ?? response.event_type;
+			let response: any = null;
+			try {
+				response = JSON.parse(event.data);
+			} catch {
+				return;
+			}
 
-			switch (type) {
-				case "chat.completion.chunk": // OpenAI
-				case "completion.chunk": // TogetherAI
-					let chunk = response.choices[0].delta.content;
-					if (chunk != undefined) {
-						this.events.emit("text", chunk);
-					}
-					let reasoning = response.choices[0].delta.reasoning;
-					if (reasoning != undefined) {
-						this.events.emit("reasoning", reasoning);
-					}
-					const images = response.choices[0].delta.images;
-					if (Array.isArray(images)) {
-						for (const image of images) {
-							const url = image?.image_url?.url;
-							if (typeof url === "string" && url.length > 0) {
-								this.events.emit("image", url);
-							}
-						}
-					}
-					break;
-				case "content_block_start": // Anthropic
-					if (response.content_block.type === "text") {
-						this.events.emit("text", response.content_block.text);
-					}
-					break;
-				case "content_block_delta": // Anthropic
-					if (response.delta.type === "text_delta") {
-						this.events.emit("text", response.delta.text);
-					}
-					break;
-				case "text-generation": // Cohere
-					this.events.emit("text", response.text);
-					break;
-				default:
-					break;
+			if (response.object !== "chat.completion.chunk") {
+				return;
+			}
+
+			const delta = response.choices?.[0]?.delta;
+			if (delta) {
+				this.emitContentDelta(delta);
 			}
 		});
 
@@ -461,7 +434,7 @@ export class API {
 						let title = `HTTP ${status} ${HTTPStatus[status]}`;
 						let details = ERROR_SUFFIX;
 						try {
-							let err = formatSentance(
+							let err = formatSentence(
 								JSON.parse(data).error.message
 							);
 							details = `${err}\n${details}`;
@@ -475,11 +448,11 @@ export class API {
 			if (this.closed) return;
 			this.events.emit(
 				"error",
-				`Request Failed\n${e.name}: ${formatSentance(
+				`Request Failed\n${e.name}: ${formatSentence(
 					e.message
 				)}\n${ERROR_SUFFIX}`
 			);
-			this.request.destroy();
+			this.request?.destroy();
 			this.closed = true;
 		});
 		this.request.on("timeout", (e: Error) => {
@@ -488,7 +461,7 @@ export class API {
 				"error",
 				`Request Failed\nTimeout\n${ERROR_SUFFIX}`
 			);
-			this.request.destroy();
+			this.request?.destroy();
 			this.closed = true;
 		});
 		this.request.on("close", () => {
@@ -508,181 +481,99 @@ export class API {
 			this.request.destroy();
 		}
 	}
-}
 
-export class AnthropicAPI extends API {
-	async getEndpoint() {
-		return joinEndpoint(this.endpoint, ANTHROPIC_PATH);
-	}
-	async getBody(
-		history: ChatHistory,
-		target: ChatEntry,
-		settings: ChatSettings
-	) {
-		const messages = await getMessages(history, target);
-		const content = getContent(
-			{
-				model: getModel(settings, this.models),
-				messages: messages,
-				stream: true,
-				system: settings.systemPrompt,
-				max_tokens: settings.maxTokens ?? 1024,
-			},
-			settings,
-			this.settings
-		);
-		const body = sanitize(JSON.stringify(content));
+	async listModels(): Promise<ModelInfo[] | Error> {
+		const url = this.getModelsEndpoint();
+		const headers = this.getBaseHeaders();
 
-		return body;
-	}
+		return new Promise((resolve) => {
+			const request_fn = url.startsWith("http://")
+				? request_http
+				: request;
+			const req = request_fn(
+				url,
+				{
+					method: "GET",
+					headers,
+				},
+				(response: IncomingMessage) => {
+					const status = response.statusCode ?? 0;
+					if (status < 200 || status >= 300) {
+						console.error("List models status", status);
+						resolve(
+							new Error(`HTTP ${status} ${HTTPStatus[status]}`)
+						);
+						return;
+					}
 
-	async getHeaders(settings: ChatSettings) {
-		const headers = {
-			"anthropic-version": "2023-06-01",
-			"anthropic-beta": "messages-2023-12-15",
-			"x-api-key": settings.apiKey,
-		};
-
-		return headers;
-	}
-}
-
-export class OpenAIAPI extends API {
-	async getEndpoint() {
-		return joinEndpoint(this.endpoint, OPENAI_PATH);
-	}
-	async getBody(
-		history: ChatHistory,
-		target: ChatEntry,
-		settings: ChatSettings
-	) {
-		const messages = await getMessages(history, target, {
-			includeImages: true,
-		});
-		if (settings.systemPrompt.trim().length != 0) {
-			messages.unshift({
-				role: "system",
-				content: settings.systemPrompt,
+					const chunks: Buffer[] = [];
+					response.on("data", (chunk: Buffer) => {
+						chunks.push(
+							Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+						);
+					});
+					response.on("end", () => {
+						try {
+							const data = Buffer.concat(chunks).toString("utf8");
+							const payload = JSON.parse(data);
+							const items = Array.isArray(payload?.data)
+								? payload.data
+								: [];
+							const models: ModelInfo[] = [];
+							for (const item of items) {
+								if (!item || typeof item.id !== "string") {
+									continue;
+								}
+								models.push({
+									id: item.id,
+									capabilities: parseCapabilities(item),
+								});
+							}
+							resolve(models);
+						} catch (error) {
+							console.error("List models parse error", error);
+							resolve(new Error("Request error: Parse failed"));
+						}
+					});
+				}
+			);
+			req.on("error", (err: Error) => {
+				console.error("List models error", err);
+				resolve(new Error(`Request error: ${err.message}`));
 			});
-		}
-		const content = getContent(
-			{
-				model: getModel(settings, this.models),
-				messages: messages,
-				stream: true,
-			},
-			settings,
-			this.settings
-		);
-		const body = sanitize(JSON.stringify(content));
-
-		return body;
-	}
-
-	async getHeaders(settings: ChatSettings): Promise<Record<string, any>> {
-		const headers = {
-			accept: "application/json",
-			authorization: `Bearer ${settings.apiKey}`,
-		};
-		return headers;
-	}
-}
-
-export class CohereAPI extends API {
-	currentChunk: string;
-	async getEndpoint() {
-		return joinEndpoint(this.endpoint, COHERE_PATH);
-	}
-	async getBody(
-		history: ChatHistory,
-		target: ChatEntry,
-		settings: ChatSettings
-	) {
-		let messages: any[] = await getMessages(history, target);
-		let lastMessage = messages.last();
-		messages.splice(messages.length - 1, 1);
-
-		const roleMap: Record<string, string> = {
-			user: "USER",
-			assistant: "CHATBOT",
-		};
-
-		messages = messages.map((value) => {
-			return { role: roleMap[value.role], message: value.content };
+			req.on("timeout", (err: Error) => {
+				console.error("List models timeout", err);
+				resolve(new Error("Request timeout"));
+			});
+			req.end();
 		});
-
-		let request: Record<string, any> = {
-			model: getModel(settings, this.models),
-			message: lastMessage!.content,
-			chat_history: messages,
-			stream: true,
-		};
-
-		if (settings.systemPrompt.trim().length != 0) {
-			request.preamble = settings.systemPrompt;
-		}
-
-		const content = getContent(request, settings, this.settings);
-		const body = sanitize(JSON.stringify(content));
-
-		return body;
-	}
-
-	async getHeaders(settings: ChatSettings): Promise<Record<string, any>> {
-		const headers = {
-			accept: "application/json",
-			authorization: `Bearer ${settings.apiKey}`,
-		};
-
-		return headers;
-	}
-
-	async handleChunk(chunk: string, parser: EventSourceParser) {
-		chunk = (this.currentChunk ?? "") + chunk;
-		this.currentChunk = "";
-
-		let chunks: string[] = chunk.split("\n");
-		let lastChunk = chunks.pop()!;
-
-		if (lastChunk.length != 0) {
-			this.currentChunk = lastChunk;
-		}
-
-		for (let chunk of chunks) {
-			parser.feed(`event: cohere\ndata:${chunk}\n\n`);
-		}
 	}
 }
 
-export class DeepSeekAPI extends API {
-	async getEndpoint() {
-		return joinEndpoint(this.endpoint, DEEPSEEK_PATH);
-	}
-	async getBody(
-		history: ChatHistory,
-		target: ChatEntry,
-		settings: ChatSettings
-	) {
-		const messages = await getMessages(history, target);
-		const content = getContent(
-			{
-				model: getModel(settings, this.models),
-				messages: messages,
-				stream: true,
-			},
-			settings,
-			this.settings
-		);
-		const body = sanitize(JSON.stringify(content));
+export { OpenAICompatibleAPI as API };
 
-		return body;
+export function getAPI(settings: ChatSettings) {
+	const modelId = settings.apiModel?.id?.trim() ?? "";
+	if (modelId.length === 0) {
+		return null;
 	}
-
-	async getHeaders(settings: ChatSettings): Promise<Record<string, any>> {
-		const headers = {
-			accept: "application/json",
-			authorization: `Bearer ${settings.apiKey}`,
-		};
-		return headers;
+	const endpoint =
+		typeof settings.apiEndpoint === "string"
+			? settings.apiEndpoint.trim()
+			: "";
+	if (endpoint.length === 0) {
+		return null;
 	}
+	const model: ModelInfo = {
+		id: modelId,
+		capabilities: {
+			reasoning: settings.apiModel?.capabilities?.reasoning === true,
+			images: settings.apiModel?.capabilities?.images === true,
+		},
+	};
+	return new OpenAICompatibleAPI(
+		endpoint,
+		model,
+		settings as Record<string, any>
+	);
 }

@@ -1,7 +1,11 @@
 import { Plugin, WorkspaceLeaf } from "obsidian";
 import { ChatView, VIEW_TYPE_CHAT } from "./view";
 import { ChatSettingProfiles } from "./common";
-import { ChatSettingTab, DEFAULT_SETTINGS } from "./settings";
+import {
+	ChatSettingTab,
+	DEFAULT_SETTINGS,
+	normalizeProfiles,
+} from "./settings";
 
 export default class ChatPlugin extends Plugin {
 	profiles: ChatSettingProfiles;
@@ -63,6 +67,7 @@ export default class ChatPlugin extends Plugin {
 			console.log("Failed to load settings", e);
 		}
 		this.profiles = Object.assign({}, DEFAULT_SETTINGS, saved);
+		normalizeProfiles(this.profiles);
 	}
 
 	async saveSettings() {

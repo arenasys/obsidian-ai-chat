@@ -45,27 +45,27 @@ export interface ChatHistory {
 	app?: App;
 }
 
+export interface ModelCapabilities {
+	reasoning: boolean;
+	images: boolean;
+}
+
+export interface ModelInfo {
+	id: string;
+	capabilities: ModelCapabilities;
+}
+
 export interface ChatSettingProfiles {
 	current: number;
 	names: string[];
 	settings: ChatSettings[];
 }
 export interface ChatSettings {
-	apiProvider: string;
-	apiModel: string;
-	apiModelCustom: string;
-	apiKey: string;
 	apiEndpoint: string;
-
-	systemPrompt: string;
-	reasoning: "low" | "medium" | "high" | null;
-	maxTokens: number | null;
-	temperature: number | null;
-	topK: number | null;
-	topP: number | null;
-	frequencyPenalty: number | null;
+	apiKey: string;
+	apiModel: ModelInfo | null;
 	imageSaveFolder: string;
-	[index: string]: number | string | null;
+	parameters: Record<string, any>;
 }
 
 export const HTTPStatus: Record<string, string> = {

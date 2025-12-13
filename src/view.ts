@@ -43,7 +43,7 @@ export class ChatView extends ItemView {
 	history: ChatHistory;
 	working: boolean;
 
-	api: API;
+	api: API | null;
 
 	editOriginal: ChatSwipe | null;
 
@@ -808,12 +808,40 @@ export class ChatView extends ItemView {
 		this.setWorking(true);
 
 		const settings = this.getSettings();
+		const modelId = settings.apiModel?.id?.trim();
+		const endpoint = settings.apiEndpoint?.trim();
 
 		const isLast =
 			entry == this.history.entries[this.history.entries.length - 1];
-		this.api = getAPI(settings)!;
+		if (!modelId) {
+			this.setWorking(false);
+			this.cleanEntry(entry);
+			this.showPopup(
+				"API model is not configured. Please set a model id in the plugin settings."
+			);
+			return;
+		}
+		if (!endpoint) {
+			this.setWorking(false);
+			this.cleanEntry(entry);
+			this.showPopup(
+				"API endpoint is not configured. Please set an endpoint in the plugin settings."
+			);
+			return;
+		}
 
-		this.api.events.on("text", (text: string) => {
+		const api = getAPI(settings);
+		if (!api) {
+			this.setWorking(false);
+			this.cleanEntry(entry);
+			this.showPopup(
+				"Failed to initialize API client. Please verify endpoint and model settings."
+			);
+			return;
+		}
+		this.api = api;
+
+		api.events.on("text", (text: string) => {
 			if (text.length == 0) {
 				return;
 			}
@@ -827,7 +855,7 @@ export class ChatView extends ItemView {
 				this.snapToBottom();
 			}
 		});
-		this.api.events.on("image", async (image: string) => {
+		api.events.on("image", async (image: string) => {
 			if (typeof image !== "string" || image.length == 0) {
 				return;
 			}
@@ -851,7 +879,7 @@ export class ChatView extends ItemView {
 				console.error("Failed to handle streamed image", err);
 			}
 		});
-		this.api.events.on("reasoning", (text: string) => {
+		api.events.on("reasoning", (text: string) => {
 			if (text.length == 0) {
 				return;
 			}
@@ -870,7 +898,7 @@ export class ChatView extends ItemView {
 				this.snapToBottom();
 			}
 		});
-		this.api.events.on("status", (status: number) => {
+		api.events.on("status", (status: number) => {
 			console.log(Date.now(), "Status:", status);
 			if (status != 200) {
 				if (isLast) {
@@ -881,29 +909,29 @@ export class ChatView extends ItemView {
 				this.syncEntryToDom(entry);
 			}
 		});
-		this.api.events.on("done", () => {
+		api.events.on("done", () => {
 			console.log(Date.now(), "Done");
 			entry.reasoning = false;
 			this.finishEntry(entry);
 		});
-		this.api.events.on("error", (error: string) => {
+		api.events.on("error", (error: string) => {
 			console.log(Date.now(), "Error:", error);
 			/*entry.new = null;
 			this.cleanEntry(entry);
 			this.syncEntryToDom(entry);*/
 			this.showPopup(error);
 		});
-		this.api.events.on("abort", () => {
+		api.events.on("abort", () => {
 			console.log(Date.now(), "Aborted");
 			this.finishEntry(entry);
 		});
-		this.api.events.on("close", () => {
+		api.events.on("close", () => {
 			console.log(Date.now(), "Closed");
 			this.cleanEntry(entry);
 			this.setWorking(false);
 		});
 
-		await this.api.send(this.history, entry, settings);
+		await api.send(this.history, entry);
 
 		return;
 	}

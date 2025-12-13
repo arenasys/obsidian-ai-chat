@@ -494,7 +494,11 @@
 }
 
 .asys__setting-medium {
-	min-width: 20em;
+	width: 20em !important;
+}
+
+.asys__setting-search {
+	width: 15em !important;
 }
 
 .asys__setting-name {
