@@ -506,6 +506,21 @@
 	min-width: unset;
 }
 
+.asys__setting-invalid {
+	color: var(--color-red) !important;
+	font-weight: 600;
+}
+
+.asys__setting-valid {
+	color: var(--color-green) !important;
+	font-weight: 600;
+}
+
+.asys__setting-unset {
+	color: var(--color-base-50) !important;
+	font-weight: 600;
+}
+
 .asys__content-text[data-asys-reasoning="true"] {
 	color: var(--text-muted);
 }

@@ -23,6 +23,7 @@ export const DEFAULT_SETTINGS: ChatSettingProfiles = {
 			parameters: {
 				systemPrompt:
 					"You are an assistant in Obsidian, a note-taking program. Shared notes/documents are provided. Dont show the document formatting (BEGIN DOCUMENT etc).",
+				additional: "",
 			},
 		},
 	],
@@ -617,6 +618,53 @@ export class ChatSettingTab extends PluginSettingTab {
 				text.inputEl.addClass("asys__setting-prompt");
 				text.setPlaceholder("Default");
 			});
+
+		const parseAdditional = (value: string): boolean => {
+			if (value.trim().length === 0) {
+				return true;
+			}
+			try {
+				const parsed = JSON.parse(value);
+				return (
+					!!parsed &&
+					typeof parsed === "object" &&
+					!Array.isArray(parsed)
+				);
+			} catch {
+				return false;
+			}
+		};
+		const additionalSetting = new Setting(containerEl).setName(
+			"Additional parameters"
+		);
+		const updateAdditionalStatus = (value: string) => {
+			const unset = value.trim().length === 0;
+			const valid = parseAdditional(value);
+			additionalSetting.descEl.setText(
+				unset ? "Unset" : valid ? "Valid" : "Invalid"
+			);
+			additionalSetting.descEl.toggleClass("asys__setting-unset", unset);
+			additionalSetting.descEl.toggleClass(
+				"asys__setting-invalid",
+				!unset && !valid
+			);
+			additionalSetting.descEl.toggleClass(
+				"asys__setting-valid",
+				!unset && valid
+			);
+		};
+		additionalSetting.addTextArea((text) => {
+			const initialValue = params.additional;
+			text.setValue(initialValue);
+			text.onChange(async (value) => {
+				params.additional = value;
+				updateAdditionalStatus(value);
+				await this.plugin.saveSettings();
+			});
+			text.inputEl.addClass("asys__setting-prompt");
+			text.setPlaceholder('JSON object, e.g. {"max_tokens":500}');
+		});
+		updateAdditionalStatus(params.additional ?? "");
 
 		if (currentModel.capabilities.reasoning) {
 			const reasoningOptions: Record<string, string> = {

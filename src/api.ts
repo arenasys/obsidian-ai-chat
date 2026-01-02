@@ -124,7 +124,23 @@ export class OpenAICompatibleAPI {
 	private async getBody(history: ChatHistory, target: ChatEntry) {
 		const messages = await this.getMessages(history, target);
 		const parameters = this.settings.parameters ?? {};
-		const { systemPrompt, ...requestSettings } = parameters;
+		const { systemPrompt, additional, ...requestSettings } = parameters;
+		let additionalParams: Record<string, any> | null = null;
+
+		if (typeof additional === "string") {
+			try {
+				const parsed = JSON.parse(additional);
+				if (
+					parsed &&
+					typeof parsed === "object" &&
+					!Array.isArray(parsed)
+				) {
+					additionalParams = parsed;
+				}
+			} catch (err) {
+				console.warn("Invalid additional parameters JSON", err);
+			}
+		}
 
 		if (
 			typeof systemPrompt === "string" &&
@@ -136,10 +152,17 @@ export class OpenAICompatibleAPI {
 			});
 		}
 
-		const content: Record<string, any> = this.adjustContent({
+		const request: Record<string, any> = {
 			stream: true,
-			...requestSettings,
 			model: this.model.id,
+			...requestSettings,
+			...(additionalParams ?? {}),
+		};
+
+		console.log("Request: ", request);
+
+		const content: Record<string, any> = this.adjustContent({
+			...request,
 			messages: messages,
 		});
 
