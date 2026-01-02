@@ -916,9 +916,6 @@ export class ChatView extends ItemView {
 		});
 		api.events.on("error", (error: string) => {
 			console.log(Date.now(), "Error:", error);
-			/*entry.new = null;
-			this.cleanEntry(entry);
-			this.syncEntryToDom(entry);*/
 			this.showPopup(error);
 		});
 		api.events.on("abort", () => {
